@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     log_file_path: str = Field(default="logs/app.log", validation_alias="LOG_FILE_PATH")
     log_max_bytes: int = Field(default=1_048_576, validation_alias="LOG_MAX_BYTES")
     log_backup_count: int = Field(default=3, validation_alias="LOG_BACKUP_COUNT")
+    openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    openai_model: str = Field(default="gpt-4.1-mini", validation_alias="OPENAI_MODEL")
+    openai_timeout_seconds: float = Field(default=20.0, validation_alias="OPENAI_TIMEOUT_SECONDS")
+    openai_max_retries: int = Field(default=1, validation_alias="OPENAI_MAX_RETRIES")
+    ai_live_requests_enabled: bool = Field(default=False, validation_alias="AI_LIVE_REQUESTS_ENABLED")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -56,6 +61,14 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_log_level(cls, value: str) -> str:
         return value.upper()
+
+    @field_validator("openai_api_key", mode="before")
+    @classmethod
+    def normalize_openai_api_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped_value = value.strip()
+        return stripped_value or None
 
 
 @lru_cache

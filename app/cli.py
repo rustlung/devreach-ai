@@ -17,6 +17,7 @@ from app.db.base import Base
 from app.db.models import ContactRequest
 from app.db.session import check_database_connection
 from app.repositories.contact_repository import ContactRepository
+from app.services.ai_service import FakeAIAnalysisService, OpenAIAnalysisService
 from app.schemas.contact import ContactRequestCreate
 from app.schemas.contact_storage import AiStatus, ContactAiUpdate, EmailStatus, ProcessingStatus
 
@@ -211,6 +212,52 @@ def check_repository() -> int:
     return 0
 
 
+def analyze_comment(live: bool = False) -> int:
+    settings = get_settings()
+    comment = "Здравствуйте, хочу обсудить разработку небольшого backend-сервиса для сайта."
+
+    if not live:
+        print("Режим AI: fake")
+        result = FakeAIAnalysisService().analyze_comment(comment)
+        print("Проверка схемы результата: успешно")
+        _print_ai_result(result)
+        print("Внешний запрос OpenAI: не выполнялся")
+        print("Расход токенов: отсутствует")
+        print("\nИтог: AI-сервис в fake-режиме работает корректно")
+        return 0
+
+    print("Режим AI: live")
+    if not settings.ai_live_requests_enabled:
+        print("Live-запрос OpenAI не выполнен: AI_LIVE_REQUESTS_ENABLED=false")
+        result = OpenAIAnalysisService(settings).analyze_comment(comment)
+        _print_ai_result(result)
+        return 0
+    if not settings.openai_api_key:
+        print("Live-запрос OpenAI не выполнен: OPENAI_API_KEY не задан")
+        result = OpenAIAnalysisService(settings).analyze_comment(comment)
+        _print_ai_result(result)
+        return 0
+
+    print("ВНИМАНИЕ: будет выполнен один реальный запрос к OpenAI с расходом API-токенов.")
+    result = OpenAIAnalysisService(settings).analyze_comment(comment)
+    _print_ai_result(result)
+    if result.status == AiStatus.SUCCESS:
+        print("\nИтог: live-проверка OpenAI успешно завершена")
+    else:
+        print("\nИтог: OpenAI недоступен или вернул ошибку, применён fallback")
+    return 0
+
+
+def _print_ai_result(result) -> None:
+    print(f"Тональность: {result.analysis.sentiment.value}")
+    print(f"Категория: {result.analysis.category.value}")
+    print(f"Приоритет: {result.analysis.priority.value}")
+    print(f"Краткое содержание: {'получено' if result.analysis.summary else 'fallback'}")
+    print("Черновик ответа: получен")
+    if result.error_code:
+        print(f"Внутренний код fallback: {result.error_code}")
+
+
 def _assert_equal(actual, expected) -> None:
     if actual != expected:
         raise AssertionError("Фактический результат не совпал с ожидаемым")
@@ -226,6 +273,8 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("check-foundation", help="Проверить фундамент проекта без внешних API")
     subparsers.add_parser("validate-contact", help="Проверить схемы и валидацию обращения без API")
     subparsers.add_parser("check-repository", help="Проверить репозиторий обращений на временной SQLite")
+    analyze_parser = subparsers.add_parser("analyze-comment", help="Проверить AI-анализ комментария")
+    analyze_parser.add_argument("--live", action="store_true", help="Выполнить один live-запрос OpenAI при явных настройках")
 
     args = parser.parse_args(argv)
     if args.command == "check-foundation":
@@ -234,6 +283,8 @@ def main(argv: list[str] | None = None) -> int:
         return validate_contact()
     if args.command == "check-repository":
         return check_repository()
+    if args.command == "analyze-comment":
+        return analyze_comment(live=args.live)
     return 1
 
 

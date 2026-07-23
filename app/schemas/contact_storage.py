@@ -14,6 +14,7 @@ class ProcessingStatus(StrEnum):
 class AiStatus(StrEnum):
     PENDING = "pending"
     SUCCESS = "success"
+    FALLBACK = "fallback"
     FAILED = "failed"
 
 
@@ -31,8 +32,16 @@ class Sentiment(StrEnum):
 
 class ContactPriority(StrEnum):
     LOW = "low"
-    MEDIUM = "medium"
+    NORMAL = "normal"
     HIGH = "high"
+
+
+class ContactCategory(StrEnum):
+    JOB_OFFER = "job_offer"
+    PROJECT_REQUEST = "project_request"
+    CONSULTATION = "consultation"
+    PARTNERSHIP = "partnership"
+    OTHER = "other"
 
 
 class ContactAiUpdate(BaseModel):

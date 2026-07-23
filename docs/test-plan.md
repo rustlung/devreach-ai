@@ -148,6 +148,43 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | DATABASE-MODEL-002 | Модель совместима с актуальной миграцией | Временная SQLite после миграции | Валидное обращение | Создать через repository | Запись создаётся и читается | Integration | `test_repository_works_with_migrated_database` | `tests/integration/test_database.py` |
 | DATABASE-MIGRATION-002 | Alembic downgrade удаляет таблицу обращений | Временная SQLite | Миграции Alembic | `upgrade head`, `downgrade -1` | Таблица удалена | Integration | `test_alembic_downgrade_removes_contact_requests_table` | `tests/integration/test_database.py` |
 
+## Автоматические сценарии этапа 4
+
+Все автоматические проверки AI-сервиса выполняются без реальных внешних запросов и без расхода токенов. OpenAI SDK используется только через mock/fake-клиенты.
+
+| ID | Описание | Предусловия | Входные данные | Шаги | Ожидаемый результат | Тип теста | Тестовая функция | Файл теста |
+| -- | -------- | ----------- | -------------- | ---- | ------------------- | -------- | ---------------- | ---------- |
+| AI-SCHEMA-001 | Валидный AI-результат принимается | Нет | Валидный payload | Создать `AIAnalysisResult` | Схема создана | Unit | `test_valid_ai_result_is_accepted` | `tests/unit/test_ai_schemas.py` |
+| AI-SCHEMA-002 | Неизвестные enum-значения отклоняются | Нет | Unknown sentiment/category/priority | Создать `AIAnalysisResult` | `ValidationError` | Unit | `test_unknown_enum_values_are_rejected` | `tests/unit/test_ai_schemas.py` |
+| AI-SCHEMA-003 | Слишком длинный summary отклоняется | Нет | 501 символ | Создать `AIAnalysisResult` | `ValidationError` | Unit | `test_too_long_summary_is_rejected` | `tests/unit/test_ai_schemas.py` |
+| AI-SCHEMA-004 | Пустой suggested reply отклоняется | Нет | Пробелы | Создать `AIAnalysisResult` | `ValidationError` | Unit | `test_empty_suggested_reply_is_rejected` | `tests/unit/test_ai_schemas.py` |
+| AI-SCHEMA-005 | Fallback analysis соответствует схеме | Нет | Нет | Вызвать `build_fallback_analysis()` | Нейтральный безопасный результат | Unit | `test_fallback_analysis_matches_schema` | `tests/unit/test_ai_schemas.py` |
+| AI-SCHEMA-006 | Fallback service result содержит статус | Нет | Error code | Вызвать `build_fallback_result()` | `status=fallback` | Unit | `test_fallback_service_result_has_fallback_status` | `tests/unit/test_ai_schemas.py` |
+| AI-SUCCESS-001 | Валидный structured output возвращает success | Mock OpenAI client | Тестовый комментарий | Вызвать `analyze_comment()` | `status=success` | Unit | `test_openai_service_returns_success_for_valid_structured_output` | `tests/unit/test_ai_service.py` |
+| AI-SUCCESS-002 | Системный промпт и комментарий передаются отдельно | Mock OpenAI client | Тестовый комментарий | Проверить messages | System/user разделены | Unit | `test_openai_service_sends_system_prompt_and_user_comment_separately` | `tests/unit/test_ai_service.py` |
+| AI-LOGGING-001 | Полный комментарий не попадает в логи | Mock OpenAI client | Тестовый комментарий | Проверить caplog | Комментария нет, enum есть | Unit | `test_openai_service_does_not_log_full_comment` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-NO-KEY-001 | Fallback при отсутствии API-ключа | Mock client не должен вызываться | Нет ключа | Вызвать `analyze_comment()` | `missing_api_key` | Unit | `test_openai_service_returns_fallback_before_client_call` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-DISABLED-001 | Fallback при отключённых live-вызовах | Mock client не должен вызываться | `AI_LIVE_REQUESTS_ENABLED=false` | Вызвать `analyze_comment()` | `live_requests_disabled` | Unit | `test_openai_service_returns_fallback_before_client_call` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-TIMEOUT-001 | Fallback при timeout OpenAI | Mock exception | `APITimeoutError` | Вызвать `analyze_comment()` | `api_timeout` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-CONNECTION-001 | Fallback при ошибке соединения | Mock exception | `APIConnectionError` | Вызвать `analyze_comment()` | `api_connection_error` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-AUTH-001 | Fallback при ошибке авторизации | Mock exception | `AuthenticationError` | Вызвать `analyze_comment()` | `api_auth_error` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-RATE-LIMIT-001 | Fallback при rate limit | Mock exception | `RateLimitError` | Вызвать `analyze_comment()` | `api_rate_limit` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-API-001 | Fallback при общей API-ошибке | Mock exception | `APIError` | Вызвать `analyze_comment()` | `api_error` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-INVALID-RESPONSE-001 | Fallback при невалидном structured output | Mock response | Unknown enum | Вызвать `analyze_comment()` | `invalid_structured_output` | Unit | `test_openai_service_returns_fallback_for_invalid_response` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-EMPTY-001 | Fallback при пустом ответе | Mock response | `parsed=None` | Вызвать `analyze_comment()` | `empty_response` | Unit | `test_openai_service_returns_fallback_for_invalid_response` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-UNEXPECTED-001 | Fallback при неожиданной ошибке | Mock exception | `RuntimeError` | Вызвать `analyze_comment()` | `unexpected_error` | Unit | `test_openai_service_returns_fallback_for_unexpected_error` | `tests/unit/test_ai_service.py` |
+| AI-PROMPT-INJECTION-001 | Prompt injection остаётся пользовательскими данными | Mock OpenAI client | Инъекционный комментарий | Проверить messages и prompt | Комментарий не склеен с system prompt | Unit | `test_prompt_injection_comment_is_not_concatenated_into_system_prompt` | `tests/unit/test_ai_service.py` |
+| AI-FAKE-001 | Fake success возвращает результат | Нет | Тестовый комментарий | Вызвать fake service | `status=success` | Unit | `test_fake_service_returns_success` | `tests/unit/test_ai_service.py` |
+| AI-FAKE-002 | Fake fallback возвращает fallback | Нет | Тестовый комментарий | Вызвать fake service | `status=fallback` | Unit | `test_fake_service_returns_fallback` | `tests/unit/test_ai_service.py` |
+| AI-FAKE-003 | Fake error имитирует исключение | Нет | Тестовый комментарий | Вызвать fake service | `RuntimeError` | Unit | `test_fake_service_can_raise_error` | `tests/unit/test_ai_service.py` |
+| AI-FAKE-004 | Fake service не создаёт OpenAI-клиент | OpenAI constructor заменён ошибкой | Тестовый комментарий | Вызвать fake service | Клиент не создан | Unit | `test_fake_service_does_not_create_openai_client` | `tests/unit/test_ai_service.py` |
+
+## Ручные сценарии этапа 4
+
+| ID | Сценарий | Предусловия | Команда | Ожидаемый результат | Пройдено |
+| -- | -------- | ----------- | ------- | ------------------- | -------- |
+| AI-LIVE-001 | Один контролируемый live-запрос OpenAI | `OPENAI_API_KEY` задан, `AI_LIVE_REQUESTS_ENABLED=true`, пользователь явно запускает команду | `python -m app.cli analyze-comment --live` | Один structured-output ответ или fallback без падения приложения | [ ] |
+
 ## Ручные сценарии
 
 - Выполнить `alembic upgrade head` из корня проекта.
@@ -244,6 +281,31 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | DATABASE-MIGRATION-001 | Alembic upgrade создаёт таблицу обращений | Integration | Да | `tests/integration/test_database.py` | [x] |
 | DATABASE-MODEL-002 | Модель совместима с актуальной миграцией | Integration | Да | `tests/integration/test_database.py` | [x] |
 | DATABASE-MIGRATION-002 | Alembic downgrade удаляет таблицу обращений | Integration | Да | `tests/integration/test_database.py` | [x] |
+| AI-SCHEMA-001 | Валидный AI-результат принимается | Unit | Да | `tests/unit/test_ai_schemas.py` | [x] |
+| AI-SCHEMA-002 | Неизвестные enum-значения отклоняются | Unit | Да | `tests/unit/test_ai_schemas.py` | [x] |
+| AI-SCHEMA-003 | Слишком длинный summary отклоняется | Unit | Да | `tests/unit/test_ai_schemas.py` | [x] |
+| AI-SCHEMA-004 | Пустой suggested reply отклоняется | Unit | Да | `tests/unit/test_ai_schemas.py` | [x] |
+| AI-SCHEMA-005 | Fallback analysis соответствует схеме | Unit | Да | `tests/unit/test_ai_schemas.py` | [x] |
+| AI-SCHEMA-006 | Fallback service result содержит статус | Unit | Да | `tests/unit/test_ai_schemas.py` | [x] |
+| AI-SUCCESS-001 | Валидный structured output возвращает success | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-SUCCESS-002 | Системный промпт и комментарий передаются отдельно | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-LOGGING-001 | Полный комментарий не попадает в логи | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-NO-KEY-001 | Fallback при отсутствии API-ключа | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-DISABLED-001 | Fallback при отключённых live-вызовах | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-TIMEOUT-001 | Fallback при timeout OpenAI | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-CONNECTION-001 | Fallback при ошибке соединения | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-AUTH-001 | Fallback при ошибке авторизации | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-RATE-LIMIT-001 | Fallback при rate limit | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-API-001 | Fallback при общей API-ошибке | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-INVALID-RESPONSE-001 | Fallback при невалидном structured output | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-EMPTY-001 | Fallback при пустом ответе | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-UNEXPECTED-001 | Fallback при неожиданной ошибке | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-PROMPT-INJECTION-001 | Prompt injection остаётся пользовательскими данными | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FAKE-001 | Fake success возвращает результат | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FAKE-002 | Fake fallback возвращает fallback | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FAKE-003 | Fake error имитирует исключение | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FAKE-004 | Fake service не создаёт OpenAI-клиент | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-LIVE-001 | Один контролируемый live-запрос OpenAI | Manual | Нет | CLI manual | [ ] |
 
 ## Финальный checklist перед сдачей проекта
 
