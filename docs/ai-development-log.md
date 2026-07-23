@@ -7884,3 +7884,50 @@ git status --short
 
 - Live ProxyAPI и Resend в рамках корректировки не запускаются.
 - Downgrade на один шаг временно возвращает legacy user email поля, что требуется для обратимости миграции.
+
+---
+
+## Этап 12. Финальная README-документация
+
+### Цель
+
+Подготовить `README.md` и сопутствующую документацию к проверке работодателем без запуска деплоя, ProxyAPI и Resend.
+
+### Полный текст промпта
+
+Место для вставки полного текста промпта пользователя о подготовке README и финальной документации.
+
+### Созданные и изменённые файлы
+
+- `README.md`
+- `.env.example`
+- `roadmap.md`
+- `docs/test-plan.md`
+- `docs/ai-development-log.md`
+
+### Архитектурные решения
+
+- README описывает фактическую owner-only email-логику: пользователю автоматический AI-ответ не отправляется.
+- ProxyAPI описан как OpenAI-compatible provider через официальный SDK `openai`.
+- В README не добавлены выдуманные ссылки, секреты, реальные email-адреса и локальные пути пользователя.
+- Render описан как будущий ручной деплой через Web Service без `render.yaml`.
+- Ограничения SQLite, file logs и in-memory rate limiter вынесены в отдельный раздел.
+
+### Выполненные проверки
+
+- `.venv\Scripts\python.exe -m pytest tests -vv` — 250 passed.
+- `.venv\Scripts\python.exe -m app.cli check-landing` — успешно.
+- `.venv\Scripts\python.exe -m app.cli check-diagnostics` — успешно.
+- `.venv\Scripts\python.exe -m app.cli --help` — успешно, CLI-команды сверены.
+- `git diff --check` — успешно, только предупреждения Git о будущей CRLF-нормализации.
+- README и `.env.example` проверены на отсутствие реальных ключей, email-адресов и локальных путей пользователя.
+- README проверен на отсутствие обещания автоматического письма пользователю.
+
+### Ручные исправления
+
+- В `.env.example` уточнён комментарий к `EMAIL_REPLY_TO`: production owner notification использует email пользователя из обращения.
+
+### Известные ограничения
+
+- Деплой на Render в этой итерации не выполняется.
+- Live ProxyAPI и Resend в этой итерации не запускаются.
