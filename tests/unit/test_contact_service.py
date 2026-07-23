@@ -12,6 +12,7 @@ from app.schemas.email import EmailSendResult, EmailTemplateContext, EmailType
 from app.services import contact_service as contact_service_module
 from app.services.ai_service import FakeAIAnalysisService
 from app.services.contact_service import ContactProcessingError, ContactService
+from app.services.demo_access import DeliveryMode, NotificationRecipient
 from app.services.email_service import FakeEmailService
 from tests.conftest import readable_test_id
 
@@ -57,10 +58,16 @@ class RecordingEmailService(FakeEmailService):
     def __init__(self, owner_mode: str = "success") -> None:
         super().__init__(owner_mode=owner_mode)
         self.owner_contexts: list[EmailTemplateContext] = []
+        self.owner_recipients: list[str | None] = []
 
-    def send_owner_notification(self, context: EmailTemplateContext) -> EmailSendResult:
+    def send_owner_notification(
+        self,
+        context: EmailTemplateContext,
+        recipient_email: str | None = None,
+    ) -> EmailSendResult:
         self.owner_contexts.append(context)
-        return super().send_owner_notification(context)
+        self.owner_recipients.append(recipient_email)
+        return super().send_owner_notification(context, recipient_email)
 
 
 class RaisingAIService:
@@ -183,7 +190,68 @@ def test_contact_service_sends_single_owner_email_without_user_autoreply(reposit
     assert response.status == ProcessingStatus.COMPLETED
     assert len(email_service.sent_messages) == 1
     assert email_service.sent_messages[0]["email_type"] == EmailType.OWNER_NOTIFICATION
+    assert str(email_service.sent_messages[0]["message"].to) == "owner@example.com"
     assert not hasattr(email_service, "send_user_confirmation")
+
+
+@readable_test_id("demo pipeline отправляет одно письмо на demo email")
+def test_contact_service_sends_demo_notification_to_demo_recipient(repository: ContactRepository, _case_id) -> None:
+    """DEMO-SINGLE-EMAIL-001: demo pipeline отправляет ровно одно письмо на demo recipient."""
+    email_service = RecordingEmailService()
+    service = ContactService(repository, TrackingAIService(), email_service)
+    contact_data = make_contact_data(
+        demo_recipient_email="reviewer@example.com",
+        demo_access_token="demo-secret",
+    )
+
+    response = service.process_contact(
+        contact_data,
+        TEST_REQUEST_ID,
+        NotificationRecipient(delivery_mode=DeliveryMode.DEMO, recipient_email="reviewer@example.com"),
+    )
+    contact = repository.get_by_id(response.id)
+
+    assert contact is not None
+    assert response.owner_email_status == EmailStatus.SENT
+    assert len(email_service.sent_messages) == 1
+    assert str(email_service.sent_messages[0]["message"].to) == "reviewer@example.com"
+    assert str(email_service.sent_messages[0]["message"].reply_to) == "user@example.com"
+    assert email_service.owner_recipients == ["reviewer@example.com"]
+    assert "demo_recipient_email" not in contact.__table__.columns
+    assert "demo_access_token" not in contact.__table__.columns
+
+
+@readable_test_id("demo pipeline не передает token в email сервис")
+def test_contact_service_does_not_pass_demo_token_to_email_service(repository: ContactRepository, _case_id) -> None:
+    """DEMO-NO-SECRETS-EMAIL-001: email-сервис получает только разрешённый recipient, без token."""
+    email_service = RecordingEmailService()
+    service = ContactService(repository, TrackingAIService(), email_service)
+
+    service.process_contact(
+        make_contact_data(demo_recipient_email="reviewer@example.com", demo_access_token="demo-secret"),
+        TEST_REQUEST_ID,
+        NotificationRecipient(delivery_mode=DeliveryMode.DEMO, recipient_email="reviewer@example.com"),
+    )
+
+    assert email_service.owner_recipients == ["reviewer@example.com"]
+    assert "demo-secret" not in repr(email_service.sent_messages)
+
+
+@readable_test_id("ошибка demo письма дает completed with errors")
+def test_demo_email_failure_results_in_completed_with_errors(repository: ContactRepository, _case_id) -> None:
+    """DEMO-EMAIL-FAILED-001: сбой demo-доставки использует существующий статус completed_with_errors."""
+    email_service = RecordingEmailService(owner_mode="failed")
+    service = ContactService(repository, TrackingAIService(), email_service)
+
+    response = service.process_contact(
+        make_contact_data(demo_recipient_email="reviewer@example.com", demo_access_token="demo-secret"),
+        TEST_REQUEST_ID,
+        NotificationRecipient(delivery_mode=DeliveryMode.DEMO, recipient_email="reviewer@example.com"),
+    )
+
+    assert response.owner_email_status == EmailStatus.FAILED
+    assert response.status == ProcessingStatus.COMPLETED_WITH_ERRORS
+    assert len(email_service.sent_messages) == 1
 
 
 @readable_test_id("ошибка письма владельцу сохраняет ai результат")

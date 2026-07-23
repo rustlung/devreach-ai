@@ -114,6 +114,49 @@
             <input id="contact-website" name="website" type="text" autocomplete="off" tabindex="-1">
           </div>
 
+          <div class="demo-panel field-wide">
+            <h3>Демонстрационная проверка email</h3>
+            <label class="checkbox-row" for="contact-demo-enabled">
+              <input
+                id="contact-demo-enabled"
+                name="demo_enabled"
+                type="checkbox"
+                aria-controls="contact-demo-fields"
+                aria-expanded="false"
+              >
+              <span>Получить результат обработки на свой email</span>
+            </label>
+            <p class="form-note">Этот режим предназначен для проверяющего тестового задания. Для отправки результата потребуется демонстрационный код.</p>
+          </div>
+
+          <div id="contact-demo-fields" class="demo-fields field-wide" hidden>
+            <div class="field">
+              <label for="contact-demo-recipient-email">Email для получения результата</label>
+              <input
+                id="contact-demo-recipient-email"
+                name="demo_recipient_email"
+                type="email"
+                autocomplete="email"
+                maxlength="254"
+                disabled
+              >
+              <p class="field-error" id="contact-demo-recipient-email-error"></p>
+            </div>
+
+            <div class="field">
+              <label for="contact-demo-access-token">Код демонстрационной проверки</label>
+              <input
+                id="contact-demo-access-token"
+                name="demo_access_token"
+                type="password"
+                autocomplete="off"
+                maxlength="256"
+                disabled
+              >
+              <p class="field-error" id="contact-demo-access-token-error"></p>
+            </div>
+          </div>
+
           <div class="form-footer">
             <button class="button button-primary" type="submit" data-submit-text="Отправить обращение" data-loading-text="Отправка...">
               Отправить обращение

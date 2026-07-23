@@ -255,6 +255,32 @@ h3 {
   gap: 8px;
 }
 
+.demo-panel {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: auto;
+  margin-top: 4px;
+}
+
+.demo-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.demo-fields[hidden] {
+  display: none;
+}
+
 .field-wide,
 .form-footer,
 .form-result,
@@ -347,6 +373,7 @@ textarea {
   }
 
   .feature-grid,
+  .demo-fields,
   .contact-form {
     grid-template-columns: 1fr;
   }

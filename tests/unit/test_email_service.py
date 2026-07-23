@@ -99,6 +99,28 @@ def test_owner_notification_uses_owner_email_and_user_reply_to(_case_id) -> None
     assert FakeResendEmails.payload["reply_to"] == "user@example.com"
 
 
+@readable_test_id("письмо владельческого типа может идти demo получателю")
+def test_owner_notification_can_use_explicit_demo_recipient(_case_id) -> None:
+    """DEMO-RECIPIENT-001: проверенный demo recipient заменяет адрес доставки, но не Reply-To."""
+    resend_module = fake_resend_module()
+    service = ResendEmailService(settings=make_settings(OWNER_EMAIL=""), resend_module=resend_module)
+    context = email_service_module.EmailTemplateContext(
+        contact_id=15,
+        name="Иван Иванов",
+        phone="+79991234567",
+        email="user@example.com",
+        comment="Тестовый комментарий",
+    )
+
+    result = service.send_owner_notification(context, recipient_email="reviewer@example.com")
+
+    assert result.status == EmailStatus.SENT
+    assert FakeResendEmails.payload["to"] == ["reviewer@example.com"]
+    assert FakeResendEmails.payload["reply_to"] == "user@example.com"
+    assert "cc" not in FakeResendEmails.payload
+    assert "bcc" not in FakeResendEmails.payload
+
+
 @readable_test_id("user confirmation метод отсутствует")
 def test_user_confirmation_methods_are_not_available(_case_id) -> None:
     """EMAIL-NO-USER-AUTOREPLY-001: email-сервис не предоставляет автоматическое письмо пользователю."""

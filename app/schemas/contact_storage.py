@@ -55,6 +55,15 @@ class ContactAiUpdate(BaseModel):
     ai_error: str | None = None
 
 
+class ContactCreateData(BaseModel):
+    name: str
+    phone: str
+    email: str
+    comment: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ContactEmailStatusUpdate(BaseModel):
     owner_email_status: EmailStatus | None = None
     owner_email_error: str | None = None

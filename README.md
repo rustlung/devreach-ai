@@ -290,6 +290,7 @@ uvicorn app.main:app --reload
 | `EMAIL_LIVE_REQUESTS_ENABLED` | Нет | Разрешает реальные email-отправки | `false` |
 | `EMAIL_REPLY_TO` | Нет | Reply-To для ручных тестовых email-команд | `reply@example.com` |
 | `EMAIL_SUBJECT_PREFIX` | Нет | Префикс темы письма владельцу | `[DevReach AI]` |
+| `DEMO_ACCESS_TOKEN` | Нет | Секретный токен demo-режима; пустое значение отключает режим | `your-long-random-demo-token` |
 
 Для безопасного локального тестирования live-флаги можно держать выключенными:
 
@@ -358,6 +359,25 @@ Invoke-RestMethod `
 
 Если AI или email завершились частичной ошибкой, HTTP-статус всё равно может быть `201 Created`, а `status` станет `completed_with_errors`.
 
+Demo-запрос для проверяющего отличается только двумя необязательными полями. Токен передаётся проверяющему отдельно и хранится только в окружении:
+
+```powershell
+$body = @{
+    name = "Иван Иванов"
+    phone = "+7 (999) 123-45-67"
+    email = "ivan@example.com"
+    comment = "Хочу обсудить разработку backend-сервиса."
+    demo_recipient_email = "reviewer@example.com"
+    demo_access_token = "your-demo-token"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://127.0.0.1:8000/api/contact" `
+    -ContentType "application/json" `
+    -Body $body
+```
+
 ### Ошибки
 
 Validation error:
@@ -374,6 +394,19 @@ Validation error:
         "msg": "Имя должно содержать хотя бы одну букву"
       }
     ]
+  },
+  "request_id": "example-request-id"
+}
+```
+
+Demo access denied:
+
+```json
+{
+  "error": {
+    "code": "demo_access_denied",
+    "message": "Режим демонстрационной проверки недоступен.",
+    "details": []
   },
   "request_id": "example-request-id"
 }
@@ -596,6 +629,29 @@ ai_status=success
 owner_email_status=sent
 ```
 
+## Демонстрационная проверка email-интеграции
+
+В обычном production-сценарии после `POST /api/contact` сервис отправляет одно owner notification письмо на `OWNER_EMAIL`. Пользователю автоматическое письмо не отправляется: в браузере он видит только подтверждение принятия обращения.
+
+Для проверяющего предусмотрен защищённый demo-режим. Если в запросе переданы `demo_recipient_email` и корректный `demo_access_token`, то единственное письмо с обращением, AI-анализом и `suggested_reply` отправляется на указанный demo email. Дополнительное письмо на `OWNER_EMAIL` в этом режиме не отправляется.
+
+Правила безопасности demo-режима:
+
+- `DEMO_ACCESS_TOKEN` задаётся только в окружении `.env` или Render;
+- пустой `DEMO_ACCESS_TOKEN` отключает demo-доставку;
+- токен передаётся проверяющему отдельно и не хранится в коде;
+- `demo_recipient_email` и `demo_access_token` не сохраняются в БД;
+- `demo_recipient_email` используется только как адрес доставки уведомления;
+- `Reply-To` остаётся email автора обращения, чтобы ответ шёл пользователю вручную;
+- без корректного токена произвольная отправка на чужой email невозможна;
+- при ошибке доступа API возвращает одинаковый безопасный `403` без раскрытия причины.
+
+Сгенерировать локальный demo token можно так:
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
 ## 14. Rate limiting
 
 Для `POST /api/contact` используется in-memory sliding window limiter.
@@ -675,6 +731,7 @@ python -m app.cli run-contact-pipeline
 python -m app.cli check-rate-limit
 python -m app.cli check-diagnostics
 python -m app.cli check-landing
+python -m app.cli check-demo-mode
 ```
 
 Live-команды запускаются только явно:

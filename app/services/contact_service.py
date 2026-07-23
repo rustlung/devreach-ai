@@ -11,12 +11,14 @@ from app.schemas.contact import ContactRequestCreate, ContactResponse
 from app.schemas.contact_storage import (
     AiStatus,
     ContactAiUpdate,
+    ContactCreateData,
     ContactPriority,
     EmailStatus,
     ProcessingStatus,
 )
 from app.schemas.email import EmailSendResult, EmailTemplateContext
 from app.services.ai_service import build_fallback_result
+from app.services.demo_access import DeliveryMode, NotificationRecipient
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,7 @@ class ContactProcessingError(Exception):
 
 
 class ContactServiceRepository(Protocol):
-    def create(self, contact_data: ContactRequestCreate) -> ContactRequest:
+    def create(self, contact_data: ContactCreateData) -> ContactRequest:
         ...
 
     def update_processing_status(self, contact_id: int, status: ProcessingStatus) -> ContactRequest:
@@ -51,7 +53,11 @@ class ContactServiceAI(Protocol):
 
 
 class ContactServiceEmail(Protocol):
-    def send_owner_notification(self, context: EmailTemplateContext) -> EmailSendResult:
+    def send_owner_notification(
+        self,
+        context: EmailTemplateContext,
+        recipient_email: str | None = None,
+    ) -> EmailSendResult:
         ...
 
 
@@ -66,15 +72,27 @@ class ContactService:
         self.ai_service = ai_service
         self.email_service = email_service
 
-    def process_contact(self, contact_data: ContactRequestCreate, request_id: str) -> ContactResponse:
+    def process_contact(
+        self,
+        contact_data: ContactRequestCreate,
+        request_id: str,
+        notification_recipient: NotificationRecipient | None = None,
+    ) -> ContactResponse:
         start_time = time.perf_counter()
         contact_id: int | None = None
+        active_recipient = notification_recipient or NotificationRecipient(delivery_mode=DeliveryMode.OWNER)
         logger.info("event=contact_pipeline_started request_id=%s", request_id)
 
         try:
             # Сначала сохраняем обращение: внешние AI/email сбои не должны стирать
             # исходный пользовательский запрос.
-            contact = self.repository.create(contact_data)
+            storage_data = ContactCreateData(
+                name=contact_data.name,
+                phone=contact_data.phone,
+                email=str(contact_data.email),
+                comment=contact_data.comment,
+            )
+            contact = self.repository.create(storage_data)
             contact_id = contact.id
             logger.info(
                 "event=contact_persisted request_id=%s contact_id=%s processing_status=%s",
@@ -94,7 +112,7 @@ class ContactService:
             contact = self._save_ai_result(contact_id, ai_result, request_id)
 
             email_context = self._build_email_context(contact, ai_result)
-            owner_result = self._run_owner_email_stage(contact_id, email_context, request_id)
+            owner_result = self._run_owner_email_stage(contact_id, email_context, request_id, active_recipient)
             contact = self._save_owner_email_result(contact_id, owner_result, request_id)
 
             final_status = self._determine_processing_status(ai_result, owner_result)
@@ -108,12 +126,13 @@ class ContactService:
         duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
         logger.info(
             "event=contact_pipeline_completed request_id=%s contact_id=%s processing_status=%s "
-            "ai_status=%s owner_email_status=%s duration_ms=%s",
+            "ai_status=%s owner_email_status=%s delivery_mode=%s duration_ms=%s",
             request_id,
             contact_id,
             contact.processing_status,
             contact.ai_status,
             contact.owner_email_status,
+            active_recipient.delivery_mode.value,
             duration_ms,
         )
 
@@ -217,10 +236,16 @@ class ContactService:
         contact_id: int,
         context: EmailTemplateContext,
         request_id: str,
+        notification_recipient: NotificationRecipient,
     ) -> EmailSendResult:
-        logger.info("event=contact_owner_email_stage_started request_id=%s contact_id=%s", request_id, contact_id)
+        logger.info(
+            "event=contact_owner_email_stage_started request_id=%s contact_id=%s delivery_mode=%s",
+            request_id,
+            contact_id,
+            notification_recipient.delivery_mode.value,
+        )
         try:
-            result = self.email_service.send_owner_notification(context)
+            result = self.email_service.send_owner_notification(context, notification_recipient.recipient_email)
         except Exception as exc:
             logger.exception(
                 "event=contact_owner_email_stage_failed request_id=%s contact_id=%s error_type=%s",
@@ -236,9 +261,11 @@ class ContactService:
             )
 
         logger.info(
-            "event=contact_owner_email_stage_completed request_id=%s contact_id=%s email_status=%s error_code=%s",
+            "event=contact_owner_email_stage_completed request_id=%s contact_id=%s delivery_mode=%s "
+            "email_status=%s error_code=%s",
             request_id,
             contact_id,
+            notification_recipient.delivery_mode.value,
             result.status.value,
             result.error_code,
         )

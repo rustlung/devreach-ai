@@ -56,6 +56,8 @@ def test_landing_page_contains_contact_fields_and_honeypot(client: TestClient, _
     assert 'class="visually-hidden-trap"' in html
     assert 'tabindex="-1"' in html
     assert 'autocomplete="off"' in html
+    assert 'name="demo_recipient_email"' in html
+    assert 'name="demo_access_token"' in html
 
 
 @readable_test_id("landing содержит label ограничения и aria live")
@@ -63,7 +65,16 @@ def test_landing_page_form_has_accessible_markup(client: TestClient, _case_id) -
     """LANDING-ACCESSIBILITY-001: форма имеет labels, ограничения, submit button и aria-live."""
     html = client.get("/").text
 
-    for field_id in ["contact-name", "contact-phone", "contact-email", "contact-comment", "contact-website"]:
+    for field_id in [
+        "contact-name",
+        "contact-phone",
+        "contact-email",
+        "contact-comment",
+        "contact-website",
+        "contact-demo-enabled",
+        "contact-demo-recipient-email",
+        "contact-demo-access-token",
+    ]:
         assert f'for="{field_id}"' in html
         assert f'id="{field_id}"' in html
 
@@ -121,7 +132,9 @@ def test_landing_frontend_contract_handles_errors_safely(client: TestClient, _ca
     js = client.get("/static/js/contact-form.js").text
 
     assert "response.status === 422" in js
+    assert "response.status === 403" in js
     assert "response.status === 429" in js
+    assert "Режим демонстрационной проверки недоступен" in js
     assert "Не удалось отправить обращение" in js
     assert "Не удалось связаться с сервером" in js
     assert "content-type" in js
@@ -138,8 +151,42 @@ def test_landing_frontend_does_not_claim_user_email_confirmation(client: TestCli
     combined = f"{html}\n{js}".lower()
 
     assert "обращение принято" in js.lower()
+    assert "обращение принято." in js.lower()
     for forbidden in ["проверьте почту", "вам отправлено письмо", "ответ направлен на email"]:
         assert forbidden not in combined
+
+
+@readable_test_id("landing demo блок скрыт и доступен")
+def test_landing_demo_block_is_present_hidden_and_accessible(client: TestClient, _case_id) -> None:
+    """DEMO-LANDING-001: landing содержит скрытый demo-блок с доступными полями."""
+    html = client.get("/").text
+
+    assert "Демонстрационная проверка email" in html
+    assert "Получить результат обработки на свой email" in html
+    assert "Email для получения результата" in html
+    assert "Код демонстрационной проверки" in html
+    assert 'id="contact-demo-fields"' in html
+    assert 'hidden' in html
+    assert 'aria-controls="contact-demo-fields"' in html
+    assert 'aria-expanded="false"' in html
+    assert 'type="password"' in html
+    assert 'autocomplete="email"' in html
+    assert 'autocomplete="off"' in html
+    assert "DEMO_ACCESS_TOKEN" not in html
+    assert "OWNER_EMAIL" not in html
+
+
+@readable_test_id("landing js отправляет demo поля только в demo режиме")
+def test_landing_js_sends_demo_fields_only_when_enabled(client: TestClient, _case_id) -> None:
+    """DEMO-LANDING-JS-001: JS добавляет demo-поля только при включенном checkbox."""
+    js = client.get("/static/js/contact-form.js").text
+
+    assert "isDemoModeEnabled()" in js
+    assert "payload.demo_recipient_email" in js
+    assert "payload.demo_access_token" in js
+    assert "setDemoFieldsEnabled(false)" in js
+    assert "Результат обработки отправлен на указанный email" in js
+    assert "innerHTML" not in js
 
 
 @readable_test_id("landing не подключает внешние scripts и inline handlers")

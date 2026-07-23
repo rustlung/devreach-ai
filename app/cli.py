@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import logging
 import sys
 import tempfile
@@ -22,6 +23,8 @@ from app.repositories.contact_repository import ContactRepository
 from app.schemas.email import EmailMessage, EmailTemplateContext, EmailType
 from app.services.ai_service import FakeAIAnalysisService, OpenAIAnalysisService
 from app.services.contact_service import ContactService
+from app.services import demo_access as demo_access_module
+from app.services.demo_access import DemoAccessDeniedError, DeliveryMode, resolve_notification_recipient
 from app.services.email_service import FakeEmailService, ResendEmailService
 from app.schemas.contact import ContactRequestCreate
 from app.schemas.contact_storage import AiStatus, ContactAiUpdate, ContactCategory, ContactPriority, EmailStatus, ProcessingStatus, Sentiment
@@ -460,6 +463,141 @@ def run_contact_pipeline(ai_fallback: bool = False, email_failure: str | None = 
     return 0
 
 
+def check_demo_mode() -> int:
+    temp_dir = tempfile.TemporaryDirectory()
+    database_path = Path(temp_dir.name) / "demo-mode.sqlite3"
+    engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False}, future=True)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    session = None
+    demo_token = "test-demo-token"
+    previous_disable_level = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+
+    try:
+        settings = Settings(APP_ENV="test", OWNER_EMAIL="owner@example.com", DEMO_ACCESS_TOKEN=demo_token)
+        ordinary_contact = ContactRequestCreate(**_base_contact_payload())
+        owner_recipient = resolve_notification_recipient(
+            ordinary_contact,
+            settings,
+            "cli-demo-owner",
+            "ip_sha256:cli",
+        )
+        if owner_recipient.delivery_mode != DeliveryMode.OWNER or owner_recipient.recipient_email is not None:
+            raise AssertionError("Обычный режим не выбрал доставку владельцу")
+        print("Обычный режим доставки: успешно")
+        print("Доставка на OWNER_EMAIL: успешно")
+
+        demo_contact = ContactRequestCreate(
+            **_base_contact_payload(
+                demo_recipient_email="reviewer@example.com",
+                demo_access_token=demo_token,
+            )
+        )
+        demo_recipient = resolve_notification_recipient(demo_contact, settings, "cli-demo-ok", "ip_sha256:cli")
+        if demo_recipient.delivery_mode != DeliveryMode.DEMO or demo_recipient.recipient_email != "reviewer@example.com":
+            raise AssertionError("Demo recipient не выбран")
+        print("Корректный demo token: успешно")
+        print("Демонстрационный получатель выбран: успешно")
+
+        Base.metadata.create_all(engine)
+        session = session_factory()
+        repository = ContactRepository(session)
+        email_service = FakeEmailService()
+        service = ContactService(repository, FakeAIAnalysisService(), email_service)
+        response = service.process_contact(demo_contact, "cli-demo-pipeline", demo_recipient)
+        contact = repository.get_by_id(response.id)
+        if contact is None:
+            raise AssertionError("Demo contact не сохранён")
+        if len(email_service.sent_messages) != 1:
+            raise AssertionError("Должно быть сформировано ровно одно fake-письмо")
+        print("Отправлено ровно одно fake-письмо: успешно")
+        message = email_service.sent_messages[0]["message"]
+        if str(message.reply_to) != str(demo_contact.email):
+            raise AssertionError("Reply-To не совпал с email автора обращения")
+        print("Reply-To автора обращения: успешно")
+
+        try:
+            resolve_notification_recipient(
+                ContactRequestCreate(
+                    **_base_contact_payload(
+                        demo_recipient_email="reviewer@example.com",
+                        demo_access_token="wrong-token",
+                    )
+                ),
+                settings,
+                "cli-demo-wrong",
+                "ip_sha256:cli",
+            )
+        except DemoAccessDeniedError:
+            print("Неверный demo token отклонён: успешно")
+        else:
+            raise AssertionError("Неверный demo token должен быть отклонён")
+
+        try:
+            resolve_notification_recipient(demo_contact, Settings(APP_ENV="test", DEMO_ACCESS_TOKEN=""), "cli-demo-off")
+        except DemoAccessDeniedError:
+            print("Отключённый demo-режим отклонён: успешно")
+        else:
+            raise AssertionError("Отключённый demo-режим должен быть отклонён")
+
+        column_names = set(contact.__table__.columns.keys())
+        if {"demo_recipient_email", "demo_access_token"} & column_names:
+            raise AssertionError("Demo-поля не должны попадать в модель БД")
+        print("Demo-поля не сохраняются в БД: успешно")
+
+        log_stream = io.StringIO()
+        handler = logging.StreamHandler(log_stream)
+        isolated_logger = logging.getLogger("app.services.demo_access.cli_check")
+        original_demo_logger = demo_access_module.logger
+        isolated_logger.handlers.clear()
+        isolated_logger.propagate = False
+        isolated_logger.setLevel(logging.WARNING)
+        isolated_logger.addHandler(handler)
+        demo_access_module.logger = isolated_logger
+        logging.disable(previous_disable_level)
+        try:
+            try:
+                resolve_notification_recipient(
+                    ContactRequestCreate(
+                        **_base_contact_payload(
+                            demo_recipient_email="reviewer@example.com",
+                            demo_access_token="wrong-token",
+                        )
+                    ),
+                    settings,
+                    "cli-demo-log",
+                    "ip_sha256:cli",
+                )
+            except DemoAccessDeniedError:
+                pass
+        finally:
+            isolated_logger.removeHandler(handler)
+            demo_access_module.logger = original_demo_logger
+            logging.disable(logging.CRITICAL)
+        log_text = log_stream.getvalue()
+        if any(secret in log_text for secret in ["wrong-token", demo_token, "reviewer@example.com"]):
+            raise AssertionError("В demo access логи попали секретные данные")
+        print("Секретные данные отсутствуют в логах: успешно")
+
+    except Exception as exc:
+        logging.getLogger("app.cli").exception("CLI-проверка demo-режима завершилась ошибкой")
+        print(f"Итог: demo-режим завершился ошибкой на этапе: {type(exc).__name__}")
+        print(f"Причина: {exc}")
+        return 1
+    finally:
+        if session is not None:
+            session.close()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+        temp_dir.cleanup()
+        logging.disable(previous_disable_level)
+
+    print("\nProxyAPI: не вызывался")
+    print("Resend: не вызывался")
+    print("\nИтог: защищённый демонстрационный режим работает корректно")
+    return 0
+
+
 def check_rate_limit() -> int:
     current_time = 1_000.0
 
@@ -632,6 +770,11 @@ def check_landing() -> int:
             if f'name="{field_name}"' not in html:
                 raise AssertionError(f"Поле формы не найдено: {field_name}")
         print("Поля формы найдены: успешно")
+        if "Демонстрационная проверка email" not in html or 'name="demo_recipient_email"' not in html:
+            raise AssertionError("Demo-блок email-проверки не найден")
+        if 'name="demo_access_token"' not in html or 'type="password"' not in html:
+            raise AssertionError("Поле demo token не найдено или не скрывает ввод")
+        print("Demo-блок email-проверки найден: успешно")
         if 'name="website"' not in html or 'tabindex="-1"' not in html:
             raise AssertionError("Honeypot не найден или доступен из tab order")
         print("Honeypot найден: успешно")
@@ -646,6 +789,9 @@ def check_landing() -> int:
         if "/api/contact" not in js.text or "/api/contact" not in html:
             raise AssertionError("Контракт POST /api/contact не найден")
         print("Контракт POST /api/contact: успешно")
+        if "response.status === 403" not in js.text or "Режим демонстрационной проверки недоступен" not in js.text:
+            raise AssertionError("Frontend не обрабатывает безопасный demo 403")
+        print("Обработка demo 403: успешно")
         for link in ['href="/docs"', 'href="/api/health"', 'href="/api/metrics"']:
             if link not in html:
                 raise AssertionError(f"Ссылка не найдена: {link}")
@@ -718,6 +864,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("check-rate-limit", help="Проверить rate limiting без FastAPI и внешних сервисов")
     subparsers.add_parser("check-diagnostics", help="Проверить health и metrics без внешних сервисов")
     subparsers.add_parser("check-landing", help="Проверить Jinja2-лендинг без Uvicorn и внешних сервисов")
+    subparsers.add_parser("check-demo-mode", help="Проверить защищённый demo-режим без внешних сервисов")
     subparsers.add_parser("render-emails", help="Отрендерить preview email-шаблонов без отправки")
     email_parser = subparsers.add_parser("check-email", help="Проверить email-сервис")
     email_parser.add_argument("--live", action="store_true", help="Отправить одно тестовое письмо через Resend")
@@ -745,6 +892,8 @@ def main(argv: list[str] | None = None) -> int:
         return check_diagnostics()
     if args.command == "check-landing":
         return check_landing()
+    if args.command == "check-demo-mode":
+        return check_demo_mode()
     if args.command == "render-emails":
         return render_emails()
     if args.command == "check-email":

@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     email_live_requests_enabled: bool = Field(default=False, validation_alias="EMAIL_LIVE_REQUESTS_ENABLED")
     email_reply_to: str | None = Field(default=None, validation_alias="EMAIL_REPLY_TO")
     email_subject_prefix: str = Field(default="[DevReach AI]", validation_alias="EMAIL_SUBJECT_PREFIX")
+    demo_access_token: str | None = Field(default=None, validation_alias="DEMO_ACCESS_TOKEN")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -96,7 +97,14 @@ class Settings(BaseSettings):
         stripped_value = value.strip()
         return stripped_value or None
 
-    @field_validator("resend_api_key", "email_from_address", "owner_email", "email_reply_to", mode="before")
+    @field_validator(
+        "resend_api_key",
+        "email_from_address",
+        "owner_email",
+        "email_reply_to",
+        "demo_access_token",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_email_setting(cls, value: str | None) -> str | None:
         if value is None:

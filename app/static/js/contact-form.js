@@ -8,12 +8,23 @@
 
   const resultBox = form.querySelector("[data-result]");
   const submitButton = form.querySelector('button[type="submit"]');
-  const fieldNames = ["name", "phone", "email", "comment"];
+  const demoToggle = getField("demo_enabled");
+  const demoFields = document.getElementById("contact-demo-fields");
+  const fieldNames = ["name", "phone", "email", "comment", "demo_recipient_email", "demo_access_token"];
+
+  setDemoFieldsEnabled(false);
+
+  if (demoToggle) {
+    demoToggle.addEventListener("change", function () {
+      setDemoFieldsEnabled(demoToggle.checked);
+    });
+  }
 
   form.addEventListener("submit", async function (event) {
     event.preventDefault();
     clearErrors();
     setLoading(true);
+    const demoModeRequested = isDemoModeEnabled();
 
     try {
       const response = await fetch(form.dataset.endpoint || API_ENDPOINT, {
@@ -22,7 +33,7 @@
         body: JSON.stringify(buildPayload()),
       });
       const payload = await parseResponseBody(response);
-      handleResponse(response, payload);
+      handleResponse(response, payload, demoModeRequested);
     } catch (error) {
       showMessage("Не удалось связаться с сервером. Проверьте соединение и повторите попытку.", "error");
     } finally {
@@ -31,7 +42,7 @@
   });
 
   function buildPayload() {
-    return {
+    const payload = {
       name: getField("name").value.trim(),
       phone: getField("phone").value.trim(),
       email: getField("email").value.trim(),
@@ -39,6 +50,13 @@
       comment: getField("comment").value,
       website: getField("website").value,
     };
+
+    if (isDemoModeEnabled()) {
+      payload.demo_recipient_email = getField("demo_recipient_email").value.trim();
+      payload.demo_access_token = getField("demo_access_token").value.trim();
+    }
+
+    return payload;
   }
 
   async function parseResponseBody(response) {
@@ -54,10 +72,14 @@
     }
   }
 
-  function handleResponse(response, payload) {
+  function handleResponse(response, payload, demoModeRequested) {
     if (response.ok) {
-      showMessage("Обращение принято", "success");
+      const successMessage = demoModeRequested
+        ? "Обращение принято. Результат обработки отправлен на указанный email."
+        : "Обращение принято.";
+      showMessage(successMessage, "success");
       form.reset();
+      setDemoFieldsEnabled(false);
       return;
     }
 
@@ -73,6 +95,11 @@
         ? `Слишком много обращений. Попробуйте повторить позже. Повтор через ${retryAfter} сек.`
         : "Слишком много обращений. Попробуйте повторить позже.";
       showMessage(message, "error", payload ? payload.request_id : null);
+      return;
+    }
+
+    if (response.status === 403) {
+      showMessage("Режим демонстрационной проверки недоступен. Проверьте код доступа.", "error", payload ? payload.request_id : null);
       return;
     }
 
@@ -133,12 +160,45 @@
   function setLoading(isLoading) {
     submitButton.disabled = isLoading;
     submitButton.textContent = isLoading ? submitButton.dataset.loadingText : submitButton.dataset.submitText;
-    fieldNames.concat("website").forEach(function (fieldName) {
-      getField(fieldName).disabled = isLoading;
+    fieldNames.concat("website", "demo_enabled").forEach(function (fieldName) {
+      const field = getField(fieldName);
+      if (!field) {
+        return;
+      }
+      if (fieldName === "demo_recipient_email" || fieldName === "demo_access_token") {
+        field.disabled = isLoading || !isDemoModeEnabled();
+        return;
+      }
+      field.disabled = isLoading;
     });
   }
 
   function getField(name) {
     return form.elements.namedItem(name);
+  }
+
+  function isDemoModeEnabled() {
+    return Boolean(demoToggle && demoToggle.checked);
+  }
+
+  function setDemoFieldsEnabled(enabled) {
+    if (!demoToggle || !demoFields) {
+      return;
+    }
+
+    demoToggle.setAttribute("aria-expanded", enabled ? "true" : "false");
+    demoFields.hidden = !enabled;
+    ["demo_recipient_email", "demo_access_token"].forEach(function (fieldName) {
+      const field = getField(fieldName);
+      field.disabled = !enabled;
+      if (!enabled) {
+        field.value = "";
+        field.removeAttribute("aria-invalid");
+        const errorBox = document.getElementById(`${field.id}-error`);
+        if (errorBox) {
+          errorBox.textContent = "";
+        }
+      }
+    });
   }
 })();

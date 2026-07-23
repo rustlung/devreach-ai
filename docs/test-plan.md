@@ -397,6 +397,25 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 - Отправить форму.
 - Ожидаемый результат: обращение не создаётся, пользователь не видит специального сообщения про honeypot.
 
+## Сценарии защищённого demo-режима email-проверки
+
+| ID | Сценарий | Предусловия | Входные данные | Ожидаемый результат | Тип теста | Автоматический тест | Файл теста |
+| -- | -------- | ----------- | -------------- | ------------------- | -------- | ------------------- | ---------- |
+| DEMO-CONFIG-001 | Пустой token отключает demo-режим | `DEMO_ACCESS_TOKEN` пустой | Настройки окружения | `settings.demo_access_token is None` | Unit | `test_empty_demo_access_token_is_normalized_to_none` | `tests/unit/test_config.py` |
+| DEMO-SCHEMA-001 | Demo-поля валидируются в HTTP-схеме | Валидные базовые поля обращения | Обычный payload и payload с demo-парой | Обычный запрос валиден, demo email нормализуется, token очищается по краям | Unit | `test_contact_request_without_demo_fields_is_valid`, `test_contact_request_accepts_valid_demo_pair` | `tests/unit/test_contact_schema.py` |
+| DEMO-ACCESS-GRANTED-001 | Корректный token выбирает demo recipient | `DEMO_ACCESS_TOKEN` задан | `demo_recipient_email`, корректный `demo_access_token` | Resolver возвращает `delivery_mode=demo`, API создаёт запись и одно письмо | Unit/Integration | `test_resolve_notification_recipient_uses_demo_email_with_valid_token`, `test_contact_api_demo_success_sends_single_email_to_demo_recipient` | `tests/unit/test_demo_access.py`, `tests/integration/test_contact_api.py` |
+| DEMO-ACCESS-DENIED-001 | Неверный token отклоняется до pipeline | `DEMO_ACCESS_TOKEN` задан | Demo email и неверный token | HTTP 403, БД пустая, `process_contact` не вызван | Unit/Integration | `test_resolve_notification_recipient_rejects_invalid_token`, `test_contact_api_invalid_demo_token_returns_403_before_pipeline` | `tests/unit/test_demo_access.py`, `tests/integration/test_contact_api.py` |
+| DEMO-DISABLED-001 | Отключённый demo-режим отклоняется | `DEMO_ACCESS_TOKEN` отсутствует | Demo email и любой token | HTTP 403, БД пустая, `process_contact` не вызван | Unit/Integration | `test_resolve_notification_recipient_rejects_disabled_demo_mode`, `test_contact_api_disabled_demo_mode_returns_403_before_pipeline` | `tests/unit/test_demo_access.py`, `tests/integration/test_contact_api.py` |
+| DEMO-RECIPIENT-001 | Email-сервис принимает явный recipient | Fake/Mock Resend | `recipient_email=reviewer@example.com` | `to` равен demo recipient, `reply_to` равен email автора, CC/BCC нет | Unit | `test_owner_notification_can_use_explicit_demo_recipient` | `tests/unit/test_email_service.py` |
+| DEMO-SINGLE-EMAIL-001 | Demo pipeline отправляет одно письмо | Fake AI/email | Валидный demo-запрос | Ровно одно owner-type письмо на demo recipient | Unit/Integration | `test_contact_service_sends_demo_notification_to_demo_recipient`, `test_contact_api_demo_success_sends_single_email_to_demo_recipient` | `tests/unit/test_contact_service.py`, `tests/integration/test_contact_api.py` |
+| DEMO-REPLY-TO-001 | Reply-To не меняется в demo-режиме | Fake email | Валидный demo-запрос | `Reply-To` равен `contact.email` | Unit/Integration | `test_contact_service_sends_demo_notification_to_demo_recipient`, `test_contact_api_demo_success_sends_single_email_to_demo_recipient` | `tests/unit/test_contact_service.py`, `tests/integration/test_contact_api.py` |
+| DEMO-NO-DATABASE-STORAGE-001 | Demo-поля не сохраняются | Временная SQLite | Валидный demo-запрос | DTO/ORM содержат только данные обращения и статусы | Unit/Integration | `test_contact_create_data_excludes_demo_fields`, `test_contact_api_demo_success_sends_single_email_to_demo_recipient` | `tests/unit/test_contact_schema.py`, `tests/integration/test_contact_api.py` |
+| DEMO-NO-SECRETS-LOGGING-001 | Demo secrets не логируются | Spy logger | Неверный demo token | Логи содержат общий `invalid_or_disabled`, но не token/email | Unit | `test_resolve_notification_recipient_does_not_log_secret_values` | `tests/unit/test_demo_access.py` |
+| DEMO-RATE-LIMIT-001 | Demo-запросы не обходят limiter | Лимит 2 запроса | Три demo-запроса с одного IP | Третий запрос получает 429, pipeline не вызывается сверх лимита | Integration | `test_demo_contact_request_over_limit_returns_429_without_pipeline` | `tests/integration/test_contact_rate_limit.py` |
+| DEMO-LANDING-001 | Landing содержит demo UI | TestClient | GET `/`, static JS | Блок скрыт по умолчанию, token password, JS отправляет demo-поля только при включении | Integration | `test_landing_demo_block_is_present_hidden_and_accessible`, `test_landing_js_sends_demo_fields_only_when_enabled` | `tests/integration/test_landing_page.py` |
+| DEMO-API-OPENAPI-001 | OpenAPI описывает demo-поля | TestClient | GET `/openapi.json` | В `ContactRequestCreate` есть необязательные demo-поля без реального token | Integration | `test_contact_api_openapi_contains_demo_fields` | `tests/integration/test_contact_api.py` |
+| DEMO-LIVE-RENDER-001 | Live demo-проверка после деплоя | Render env настроен, token передан проверяющему отдельно | Браузерная отправка формы с demo-полями | Одно письмо приходит на demo recipient, `Reply-To` равен автору обращения | Manual | Не автоматизирован | Render manual |
+
 ## Таблица соответствия
 
 | ID | Сценарий | Тип | Автоматизирован | Файл теста | Пройдено |
@@ -623,6 +642,20 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | LANDING-SECURITY-001 | Нет внешних scripts и inline handlers | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
 | LANDING-API-COMPATIBILITY-001 | Frontend-сценарий совместим с `POST /api/contact` | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
 | UI-NO-EMAIL-CONFIRMATION-001 | Frontend не обещает письмо пользователю | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| DEMO-CONFIG-001 | Пустой `DEMO_ACCESS_TOKEN` отключает demo-режим | Unit | Да | `tests/unit/test_config.py` | [x] |
+| DEMO-SCHEMA-001 | HTTP-схема принимает обычный запрос и валидную demo-пару | Unit | Да | `tests/unit/test_contact_schema.py` | [x] |
+| DEMO-ACCESS-GRANTED-001 | Валидный demo token разрешает доставку на demo recipient | Unit/Integration | Да | `tests/unit/test_demo_access.py`, `tests/integration/test_contact_api.py` | [x] |
+| DEMO-ACCESS-DENIED-001 | Неверный demo token возвращает безопасный 403 до pipeline | Unit/Integration | Да | `tests/unit/test_demo_access.py`, `tests/integration/test_contact_api.py` | [x] |
+| DEMO-DISABLED-001 | Отключённый demo-режим возвращает безопасный 403 до pipeline | Unit/Integration | Да | `tests/unit/test_demo_access.py`, `tests/integration/test_contact_api.py` | [x] |
+| DEMO-RECIPIENT-001 | Email-сервис использует явный demo recipient без CC/BCC | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| DEMO-SINGLE-EMAIL-001 | Demo pipeline формирует ровно одно письмо | Unit/Integration | Да | `tests/unit/test_contact_service.py`, `tests/integration/test_contact_api.py` | [x] |
+| DEMO-REPLY-TO-001 | Reply-To demo-письма остаётся email автора обращения | Unit/Integration | Да | `tests/unit/test_contact_service.py`, `tests/integration/test_contact_api.py` | [x] |
+| DEMO-NO-DATABASE-STORAGE-001 | Demo email и token не сохраняются в БД/DTO | Unit/Integration | Да | `tests/unit/test_contact_schema.py`, `tests/integration/test_contact_api.py` | [x] |
+| DEMO-NO-SECRETS-LOGGING-001 | Demo token и demo email не попадают в логи resolver | Unit | Да | `tests/unit/test_demo_access.py` | [x] |
+| DEMO-RATE-LIMIT-001 | Demo-запросы не обходят contact rate limiter | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
+| DEMO-LANDING-001 | Landing содержит скрытый demo-блок и безопасные UI-состояния | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| DEMO-API-OPENAPI-001 | OpenAPI содержит необязательные demo-поля без реального token | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
+| DEMO-LIVE-RENDER-001 | Публичный Render demo-запрос доставляет одно письмо проверяющему | Manual | Нет | Render manual | [ ] |
 | UI-LANDING-001 | Проверка desktop/mobile отображения `/` | Manual | Нет | Browser manual | [ ] |
 | UI-FORM-SUCCESS-001 | Успешная отправка формы в браузере | Manual | Нет | Browser manual | [ ] |
 | UI-FORM-VALIDATION-001 | Field errors при 422 в браузере | Manual | Нет | Browser manual | [ ] |

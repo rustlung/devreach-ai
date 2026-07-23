@@ -6,10 +6,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.db.models import ContactRequest
-from app.schemas.contact import ContactRequestCreate
 from app.schemas.contact_storage import (
     AiStatus,
     ContactAiUpdate,
+    ContactCreateData,
     ContactEmailStatusUpdate,
     ContactMetrics,
     EmailStatus,
@@ -31,7 +31,7 @@ class ContactRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def create(self, contact_data: ContactRequestCreate) -> ContactRequest:
+    def create(self, contact_data: ContactCreateData) -> ContactRequest:
         logger.info("event=contact_create_started operation=create")
         contact = ContactRequest(
             name=contact_data.name,

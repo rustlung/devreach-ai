@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.contact import ContactRequestCreate
+from app.schemas.contact_storage import ContactCreateData
 from tests.conftest import readable_test_id
 
 
@@ -281,3 +282,130 @@ def test_filled_honeypot_is_rejected(_case_id) -> None:
         ContactRequestCreate(**valid_contact_data(website="https://spam.test"))
 
     assert "Служебное поле должно оставаться пустым" in validation_messages(exc_info.value)
+
+
+@readable_test_id("обычное обращение без demo полей валидно")
+def test_contact_request_without_demo_fields_is_valid(_case_id) -> None:
+    """DEMO-SCHEMA-001: обычный HTTP payload не требует demo-полей."""
+    contact = ContactRequestCreate(**valid_contact_data())
+
+    assert contact.demo_recipient_email is None
+    assert contact.demo_access_token is None
+
+
+@readable_test_id("корректная demo пара валидна")
+def test_contact_request_accepts_valid_demo_pair(_case_id) -> None:
+    """DEMO-SCHEMA-002: demo email и demo token вместе проходят проверку схемы."""
+    contact = ContactRequestCreate(
+        **valid_contact_data(
+            demo_recipient_email="  Reviewer@Example.COM  ",
+            demo_access_token="  demo-secret  ",
+        )
+    )
+
+    assert str(contact.demo_recipient_email) == "reviewer@example.com"
+    assert contact.demo_access_token == "demo-secret"
+
+
+@readable_test_id("список demo email отклоняется")
+def test_contact_request_rejects_demo_email_list(_case_id) -> None:
+    """DEMO-SCHEMA-003: demo recipient принимает только один email-адрес."""
+    with pytest.raises(ValidationError) as exc_info:
+        ContactRequestCreate(
+            **valid_contact_data(
+                demo_recipient_email="reviewer@example.com,other@example.com",
+                demo_access_token="demo-secret",
+            )
+        )
+
+    assert "один адрес" in validation_messages(exc_info.value)
+
+
+@readable_test_id("некорректный demo email отклоняется")
+def test_contact_request_rejects_invalid_demo_email(_case_id) -> None:
+    """DEMO-SCHEMA-004: demo recipient проходит стандартную email-валидацию."""
+    with pytest.raises(ValidationError):
+        ContactRequestCreate(**valid_contact_data(demo_recipient_email="not-email", demo_access_token="demo-secret"))
+
+
+@readable_test_id("слишком длинный demo token отклоняется")
+def test_contact_request_rejects_too_long_demo_token(_case_id) -> None:
+    """DEMO-SCHEMA-005: demo token ограничен разумной длиной."""
+    with pytest.raises(ValidationError):
+        ContactRequestCreate(
+            **valid_contact_data(
+                demo_recipient_email="reviewer@example.com",
+                demo_access_token="x" * 257,
+            )
+        )
+
+
+@readable_test_id("пустые demo поля считаются отсутствующими")
+def test_contact_request_treats_empty_demo_fields_as_absent(_case_id) -> None:
+    """DEMO-SCHEMA-006: пустые demo поля не включают demo-режим."""
+    contact = ContactRequestCreate(
+        **valid_contact_data(
+            demo_recipient_email="   ",
+            demo_access_token="   ",
+        )
+    )
+
+    assert contact.demo_recipient_email is None
+    assert contact.demo_access_token is None
+
+
+@readable_test_id("demo token сохраняет внутренние пробелы")
+def test_contact_request_keeps_demo_token_internal_spaces(_case_id) -> None:
+    """DEMO-SCHEMA-007: demo token не проходит однострочное схлопывание пробелов."""
+    contact = ContactRequestCreate(
+        **valid_contact_data(
+            demo_recipient_email="reviewer@example.com",
+            demo_access_token="  left  right  ",
+        )
+    )
+
+    assert contact.demo_access_token == "left  right"
+
+
+@readable_test_id("demo token не попадает в repr схемы")
+def test_contact_request_repr_does_not_include_demo_token(_case_id) -> None:
+    """DEMO-SCHEMA-009: demo token скрыт из repr входной схемы."""
+    contact = ContactRequestCreate(
+        **valid_contact_data(
+            demo_recipient_email="reviewer@example.com",
+            demo_access_token="demo-secret",
+        )
+    )
+
+    assert "demo-secret" not in repr(contact)
+    assert "demo_access_token" not in repr(contact)
+
+
+@readable_test_id("demo token без email возвращает ошибку схемы")
+def test_contact_request_rejects_demo_token_without_recipient(_case_id) -> None:
+    """DEMO-SCHEMA-008: token без demo email считается структурно неполным запросом."""
+    with pytest.raises(ValidationError) as exc_info:
+        ContactRequestCreate(**valid_contact_data(demo_access_token="demo-secret"))
+
+    assert "email получателя" in validation_messages(exc_info.value)
+
+
+@readable_test_id("storage dto не содержит demo поля")
+def test_contact_create_data_excludes_demo_fields(_case_id) -> None:
+    """DEMO-NO-DATABASE-STORAGE-001: DTO сохранения содержит только поля обращения."""
+    contact = ContactRequestCreate(
+        **valid_contact_data(
+            demo_recipient_email="reviewer@example.com",
+            demo_access_token="demo-secret",
+        )
+    )
+    storage_data = ContactCreateData(
+        name=contact.name,
+        phone=contact.phone,
+        email=str(contact.email),
+        comment=contact.comment,
+    )
+
+    assert set(storage_data.model_dump()) == {"name", "phone", "email", "comment"}
+    assert not hasattr(storage_data, "demo_recipient_email")
+    assert not hasattr(storage_data, "demo_access_token")

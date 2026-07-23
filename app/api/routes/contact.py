@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from starlette.concurrency import run_in_threadpool
 
 from app.api.dependencies import enforce_contact_rate_limit, get_contact_service
+from app.core.client_ip import build_client_key, resolve_client_ip
 from app.core.logging import get_request_id
 from app.schemas.contact import ContactRequestCreate, ContactResponse
 from app.services.contact_service import ContactService
+from app.services.demo_access import resolve_notification_recipient
 
 
 router = APIRouter(prefix="/api", tags=["contact"])
@@ -36,6 +38,7 @@ router = APIRouter(prefix="/api", tags=["contact"])
             },
         },
         422: {"description": "Переданные данные не прошли проверку"},
+        403: {"description": "Демонстрационный режим недоступен"},
         429: {"description": "Превышен лимит обращений"},
         500: {"description": "Внутренняя ошибка сервера"},
     },
@@ -55,8 +58,12 @@ router = APIRouter(prefix="/api", tags=["contact"])
     },
 )
 async def create_contact(
+    request: Request,
     contact_data: ContactRequestCreate,
     contact_service: ContactService = Depends(get_contact_service),
 ) -> ContactResponse:
     request_id = get_request_id()
-    return await run_in_threadpool(contact_service.process_contact, contact_data, request_id)
+    settings = request.app.state.settings
+    client_key = build_client_key(resolve_client_ip(request, settings))
+    notification_recipient = resolve_notification_recipient(contact_data, settings, request_id, client_key)
+    return await run_in_threadpool(contact_service.process_contact, contact_data, request_id, notification_recipient)

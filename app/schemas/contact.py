@@ -17,6 +17,7 @@ PHONE_MAX_DIGITS = 15
 EMAIL_MAX_LENGTH = 254
 COMMENT_MIN_LENGTH = 5
 COMMENT_MAX_LENGTH = 5000
+DEMO_ACCESS_TOKEN_MAX_LENGTH = 256
 
 
 class ContactRequestCreate(BaseModel):
@@ -25,6 +26,17 @@ class ContactRequestCreate(BaseModel):
     email: Annotated[EmailStr, Field(max_length=EMAIL_MAX_LENGTH)]
     comment: str
     website: str | None = None
+    demo_recipient_email: Annotated[EmailStr | None, Field(max_length=EMAIL_MAX_LENGTH)] = None
+    demo_access_token: str | None = Field(
+        default=None,
+        json_schema_extra={"maxLength": DEMO_ACCESS_TOKEN_MAX_LENGTH},
+    )
+
+    def __repr_args__(self):
+        for name, value in super().__repr_args__():
+            if name == "demo_access_token":
+                continue
+            yield name, value
 
     @field_validator("name", mode="before")
     @classmethod
@@ -96,6 +108,41 @@ class ContactRequestCreate(BaseModel):
             raise ValueError(f"Email должен быть не длиннее {EMAIL_MAX_LENGTH} символов")
         return normalized_email
 
+    @field_validator("demo_recipient_email", mode="before")
+    @classmethod
+    def normalize_demo_recipient_email_before_validation(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("Email для демонстрационного уведомления должен быть строкой")
+        normalized_email = normalize_email(value)
+        if not normalized_email:
+            return None
+        if "," in normalized_email or ";" in normalized_email:
+            raise ValueError("Email для демонстрационного уведомления должен содержать один адрес")
+        if any(character.isspace() for character in normalized_email):
+            raise ValueError("Email для демонстрационного уведомления не должен содержать внутренние пробелы")
+        if len(normalized_email) > EMAIL_MAX_LENGTH:
+            raise ValueError(
+                f"Email для демонстрационного уведомления должен быть не длиннее {EMAIL_MAX_LENGTH} символов"
+            )
+        return normalized_email
+
+    @field_validator("demo_access_token", mode="before")
+    @classmethod
+    def normalize_demo_access_token_before_validation(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("Код демонстрационной проверки должен быть строкой")
+        # Код обрезаем только по краям: внутренние символы могут быть частью секрета.
+        stripped_value = value.strip()
+        if len(stripped_value) > DEMO_ACCESS_TOKEN_MAX_LENGTH:
+            raise ValueError(
+                f"Код демонстрационной проверки должен быть не длиннее {DEMO_ACCESS_TOKEN_MAX_LENGTH} символов"
+            )
+        return stripped_value or None
+
     @field_validator("comment", mode="before")
     @classmethod
     def normalize_comment_before_validation(cls, value: str) -> str:
@@ -127,6 +174,8 @@ class ContactRequestCreate(BaseModel):
     def reject_filled_honeypot(self) -> "ContactRequestCreate":
         if self.website:
             raise ValueError("Служебное поле должно оставаться пустым")
+        if self.demo_access_token and self.demo_recipient_email is None:
+            raise ValueError("Для демонстрационной проверки укажите email получателя")
         return self
 
 

@@ -53,7 +53,11 @@ class CountingEmailService:
     def __init__(self) -> None:
         self.owner_calls = 0
 
-    def send_owner_notification(self, context: EmailTemplateContext) -> EmailSendResult:
+    def send_owner_notification(
+        self,
+        context: EmailTemplateContext,
+        recipient_email: str | None = None,
+    ) -> EmailSendResult:
         self.owner_calls += 1
         return EmailSendResult(status=EmailStatus.SENT, provider="fake", message_id=f"owner-{self.owner_calls}")
 
@@ -215,6 +219,35 @@ def test_invalid_contact_request_counts_toward_rate_limit(rate_limit_api_context
     assert contact_count(session) == 0
     assert ai_service.calls == 0
     assert email_service.owner_calls == 0
+
+
+@readable_test_id("demo запросы не обходят rate limiter")
+def test_demo_contact_request_over_limit_returns_429_without_pipeline(rate_limit_api_context, _case_id) -> None:
+    """DEMO-RATE-LIMIT-001: demo-поля не участвуют в client key и не обходят лимит endpoint."""
+    app, session, _clock, ai_service, email_service = rate_limit_api_context
+    app.state.settings.demo_access_token = "demo-secret"
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        client.post(
+            "/api/contact",
+            json=valid_payload(demo_recipient_email="first@example.com", demo_access_token="demo-secret"),
+            headers={"X-Forwarded-For": "198.51.100.8"},
+        )
+        client.post(
+            "/api/contact",
+            json=valid_payload(demo_recipient_email="second@example.com", demo_access_token="demo-secret"),
+            headers={"X-Forwarded-For": "198.51.100.8"},
+        )
+        blocked = client.post(
+            "/api/contact",
+            json=valid_payload(demo_recipient_email="third@example.com", demo_access_token="demo-secret"),
+            headers={"X-Forwarded-For": "198.51.100.8"},
+        )
+
+    assert blocked.status_code == 429
+    assert contact_count(session) == 2
+    assert ai_service.calls == 2
+    assert email_service.owner_calls == 2
 
 
 @readable_test_id("honeypot запрос не создает запись и логируется")

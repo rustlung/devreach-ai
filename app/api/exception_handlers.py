@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.core.logging import get_request_id
+from app.services.demo_access import DemoAccessDeniedError
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,17 @@ async def rate_limit_exception_handler(request: Request, exc: RateLimitExceededE
             details=[],
         ),
         headers=headers,
+    )
+
+
+async def demo_access_denied_exception_handler(request: Request, exc: DemoAccessDeniedError) -> JSONResponse:
+    return JSONResponse(
+        status_code=403,
+        content=error_payload(
+            code="demo_access_denied",
+            message="Режим демонстрационной проверки недоступен.",
+            details=[],
+        ),
     )
 
 

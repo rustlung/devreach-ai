@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.exception_handlers import (
     RateLimitExceededError,
+    demo_access_denied_exception_handler,
     http_exception_handler,
     rate_limit_exception_handler,
     unhandled_exception_handler,
@@ -20,6 +21,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import RequestLoggingMiddleware, configure_logging
 from app.core.rate_limiter import SlidingWindowRateLimiter
 from app.core.version import APP_VERSION
+from app.services.demo_access import DemoAccessDeniedError
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -51,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(RateLimitExceededError, rate_limit_exception_handler)
+    app.add_exception_handler(DemoAccessDeniedError, demo_access_denied_exception_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 

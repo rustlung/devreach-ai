@@ -7931,3 +7931,81 @@ git status --short
 
 - Деплой на Render в этой итерации не выполняется.
 - Live ProxyAPI и Resend в этой итерации не запускаются.
+
+---
+
+## Защищённый демонстрационный режим email-проверки
+
+### Цель
+
+Добавить перед деплоем защищённый demo-режим, чтобы проверяющий мог получить owner-type письмо с обращением, AI-анализом и черновиком ответа на свой email без превращения публичной формы в открытый email relay.
+
+### Полный текст промпта
+
+Место для вставки полного текста промпта пользователя о защищённом demo-режиме email-проверки.
+
+### Причина доработки
+
+В обычном сценарии письмо отправляется только на `OWNER_EMAIL`. Для публичной проверки нужен способ доставить результат проверяющему, но произвольный recipient без защиты создаёт риск несанкционированной рассылки.
+
+### Созданные и изменённые файлы
+
+- `.env.example`
+- `README.md`
+- `roadmap.md`
+- `docs/test-plan.md`
+- `docs/ai-development-log.md`
+- `app/core/config.py`
+- `app/schemas/contact.py`
+- `app/schemas/contact_storage.py`
+- `app/services/demo_access.py`
+- `app/services/contact_service.py`
+- `app/services/email_service.py`
+- `app/repositories/contact_repository.py`
+- `app/api/routes/contact.py`
+- `app/api/exception_handlers.py`
+- `app/main.py`
+- `app/templates/web/index.html`
+- `app/static/css/main.css`
+- `app/static/js/contact-form.js`
+- `app/cli.py`
+- `tests/unit/test_config.py`
+- `tests/unit/test_contact_schema.py`
+- `tests/unit/test_demo_access.py`
+- `tests/unit/test_contact_service.py`
+- `tests/unit/test_email_service.py`
+- `tests/integration/test_contact_api.py`
+- `tests/integration/test_contact_rate_limit.py`
+- `tests/integration/test_landing_page.py`
+
+### Архитектурные решения
+
+- Demo-режим включается наличием непустого `DEMO_ACCESS_TOKEN`; отдельный флаг не добавлялся, чтобы не создавать противоречащие настройки.
+- Проверка token вынесена в `app.services.demo_access.resolve_notification_recipient()`.
+- Для сравнения token используется `secrets.compare_digest`.
+- Неверный token, отсутствие token при demo email и отключённый режим возвращают одинаковый безопасный `403 demo_access_denied`.
+- Token без demo email считается структурно неполным payload и возвращает `422`.
+- `ContactService` получает уже разрешённого получателя и сохраняет в БД только `ContactCreateData`.
+- `demo_recipient_email` и `demo_access_token` не сохраняются в ORM, миграция не требуется.
+- Email-сервис отправляет одно owner-type письмо на `OWNER_EMAIL` или проверенный demo recipient; `Reply-To` остаётся email автора обращения.
+
+### Выполненные проверки
+
+- `.venv\Scripts\python.exe -m pytest tests/unit/test_demo_access.py tests/unit/test_contact_schema.py tests/unit/test_contact_service.py tests/unit/test_email_service.py tests/integration/test_contact_api.py tests/integration/test_landing_page.py tests/integration/test_contact_rate_limit.py tests/unit/test_config.py -vv` — 147 passed.
+- `.venv\Scripts\python.exe -m pytest tests/unit/test_demo_access.py -vv` — 8 passed.
+- `.venv\Scripts\python.exe -m pytest tests/unit/test_contact_schema.py -vv` — 57 passed.
+- `.venv\Scripts\python.exe -m pytest tests/unit/test_contact_service.py tests/unit/test_email_service.py -vv` — 36 passed.
+- `.venv\Scripts\python.exe -m pytest tests/integration/test_contact_api.py tests/integration/test_landing_page.py -vv` — 29 passed.
+- `.venv\Scripts\python.exe -m app.cli check-demo-mode` — успешно, ProxyAPI/Resend не вызывались.
+- `.venv\Scripts\python.exe -m pytest tests -vv` — 282 passed.
+- `.venv\Scripts\python.exe -m app.cli check-landing` — успешно.
+- `git diff --check` — успешно, только предупреждения Git о будущей CRLF-нормализации.
+
+### Ручные исправления
+
+Ручные исправления пользователем не выполнялись.
+
+### Известные ограничения
+
+- Live ProxyAPI и Resend не запускались в рамках этой доработки.
+- Live demo-проверка на Render остаётся отдельным ручным сценарием после деплоя.

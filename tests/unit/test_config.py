@@ -22,6 +22,7 @@ def test_settings_are_loaded_from_environment(monkeypatch, tmp_path, _case_id) -
     monkeypatch.setenv("CONTACT_RATE_LIMIT_REQUESTS", "5")
     monkeypatch.setenv("CONTACT_RATE_LIMIT_WINDOW_SECONDS", "120")
     monkeypatch.setenv("TRUST_PROXY_HEADERS", "false")
+    monkeypatch.setenv("DEMO_ACCESS_TOKEN", " demo-token ")
 
     settings = Settings()
 
@@ -38,6 +39,17 @@ def test_settings_are_loaded_from_environment(monkeypatch, tmp_path, _case_id) -
     assert settings.contact_rate_limit_requests == 5
     assert settings.contact_rate_limit_window_seconds == 120
     assert settings.trust_proxy_headers is False
+    assert settings.demo_access_token == "demo-token"
+
+
+@readable_test_id("пустой demo token отключает demo режим")
+def test_empty_demo_access_token_is_normalized_to_none(monkeypatch, _case_id) -> None:
+    """DEMO-CONFIG-001: пустой DEMO_ACCESS_TOKEN считается отсутствующей настройкой."""
+    monkeypatch.setenv("DEMO_ACCESS_TOKEN", "   ")
+
+    settings = Settings()
+
+    assert settings.demo_access_token is None
 
 
 @pytest.mark.parametrize(

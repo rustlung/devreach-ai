@@ -47,26 +47,35 @@ class ResendEmailService:
         self.template_environment = template_environment or create_email_template_environment()
         self._resend = resend_module
 
-    def build_owner_message(self, context: EmailTemplateContext) -> EmailMessage:
+    def build_owner_message(self, context: EmailTemplateContext, recipient_email: str | None = None) -> EmailMessage:
         rendered = self._render_templates(EmailType.OWNER_NOTIFICATION, context)
         subject = self._build_owner_subject(context)
         return EmailMessage(
-            to=self.settings.owner_email or "owner@example.com",
+            to=recipient_email or self.settings.owner_email or "owner@example.com",
             subject=subject,
             html=rendered["html"],
             text=rendered["text"],
             reply_to=context.email,
         )
 
-    def send_owner_notification(self, context: EmailTemplateContext) -> EmailSendResult:
-        if not self.settings.owner_email:
+    def send_owner_notification(
+        self,
+        context: EmailTemplateContext,
+        recipient_email: str | None = None,
+    ) -> EmailSendResult:
+        recipient = recipient_email or self.settings.owner_email
+        if not recipient:
             return self._failed(
                 EmailType.OWNER_NOTIFICATION,
                 context.contact_id,
                 "missing_owner_email",
                 "OWNER_EMAIL не задан",
             )
-        return self.send(self.build_owner_message(context), EmailType.OWNER_NOTIFICATION, context.contact_id)
+        return self.send(
+            self.build_owner_message(context, recipient_email=recipient),
+            EmailType.OWNER_NOTIFICATION,
+            context.contact_id,
+        )
 
     def send(self, message: EmailMessage, email_type: EmailType, contact_id: int | None = None) -> EmailSendResult:
         start_time = time.perf_counter()
@@ -308,9 +317,13 @@ class FakeEmailService:
             )
         return EmailSendResult(status=EmailStatus.SENT, provider="fake", message_id=f"fake-{len(self.sent_messages)}")
 
-    def send_owner_notification(self, context: EmailTemplateContext) -> EmailSendResult:
+    def send_owner_notification(
+        self,
+        context: EmailTemplateContext,
+        recipient_email: str | None = None,
+    ) -> EmailSendResult:
         message = EmailMessage(
-            to="owner@example.com",
+            to=recipient_email or "owner@example.com",
             subject="Fake owner notification",
             html="<p>Fake owner notification</p>",
             text="Fake owner notification",
