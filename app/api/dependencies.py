@@ -21,6 +21,10 @@ def get_contact_rate_limiter(request: Request) -> SlidingWindowRateLimiter:
     return request.app.state.contact_rate_limiter
 
 
+def get_contact_repository(db: Session = Depends(get_db)) -> ContactRepository:
+    return ContactRepository(db)
+
+
 def enforce_contact_rate_limit(
     request: Request,
     limiter: SlidingWindowRateLimiter = Depends(get_contact_rate_limiter),

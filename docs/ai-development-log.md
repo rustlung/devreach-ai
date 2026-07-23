@@ -6672,3 +6672,86 @@ git status --short
 - Состояние сбрасывается при перезапуске приложения.
 - Несколько инстансов приложения не синхронизируют лимиты.
 - Для production-масштабирования потребуется Redis, внешний limiter или edge-level защита.
+
+---
+
+## Этап 8. Метрики и расширенный health check
+
+### Цель
+
+Добавить публичные диагностические endpoint `GET /api/health` и `GET /api/metrics`, которые показывают состояние приложения, доступность БД и обезличенные агрегаты обращений без ProxyAPI/Resend вызовов.
+
+### Полный текст промпта
+
+Пользователь передал промпт этапа 8 через attachment `pasted-text.txt`. Полный текст находится в исходном сообщении текущей итерации и не содержит секретов.
+
+### Структура metrics
+
+- `total_contacts`
+- `processing`
+- `ai`
+- `emails.owner`
+- `emails.user`
+- `categories`
+- `generated_at`
+- `request_id`
+
+Все известные enum-статусы и категории присутствуют в ответе даже при нулевых значениях. Старые или неизвестные значения сводятся в `unknown` и логируются.
+
+### Диагностические статусы health
+
+- `ok`: БД доступна, AI/email включены и локально настроены.
+- `degraded`: БД доступна, но AI/email отключены или не настроены.
+- `unavailable`: БД недоступна, HTTP 503.
+
+AI/email проверяются только по локальной конфигурации. Внешние запросы к ProxyAPI и Resend не выполняются.
+
+### Изменения repository
+
+- `ContactRepository.get_metrics()` остаётся единственным источником агрегатов.
+- Используются SQL `count/group_by`, без загрузки всех обращений в Python.
+- Пустые/старые категории не отбрасываются, чтобы API мог показать их как `unknown`.
+- При SQLAlchemy-ошибке выполняется rollback и поднимается `ContactRepositoryError`.
+
+### Созданные и изменённые файлы
+
+- `app/api/routes/health.py`
+- `app/api/routes/metrics.py`
+- `app/api/dependencies.py`
+- `app/core/version.py`
+- `app/main.py`
+- `app/repositories/contact_repository.py`
+- `app/schemas/health.py`
+- `app/schemas/metrics.py`
+- `app/services/diagnostics.py`
+- `app/cli.py`
+- `tests/unit/test_metrics_schema.py`
+- `tests/unit/test_health_service.py`
+- `tests/integration/test_health.py`
+- `tests/integration/test_metrics_api.py`
+- `docs/test-plan.md`
+- `docs/ai-development-log.md`
+- `roadmap.md`
+
+### Выполненные тесты
+
+- `.venv\Scripts\python.exe -m pytest tests\unit\test_metrics_schema.py -vv` — 10 passed.
+- `.venv\Scripts\python.exe -m pytest tests\unit\test_health_service.py -vv` — 7 passed.
+- `.venv\Scripts\python.exe -m pytest tests\integration\test_health.py -vv` — 6 passed.
+- `.venv\Scripts\python.exe -m pytest tests\integration\test_metrics_api.py -vv` — 6 passed.
+- `.venv\Scripts\python.exe -m app.cli check-diagnostics` — успешно.
+- `.venv\Scripts\python.exe -m pytest tests -vv` — 234 passed.
+
+### CLI
+
+`python -m app.cli check-diagnostics` проверяет health, database latency, локальные статусы AI/email, пустые и заполненные metrics, отсутствие PII и удаляет временную SQLite.
+
+### Ручные исправления
+
+Не выполнялись.
+
+### Ограничения
+
+- Metrics endpoint публичный, потому что возвращает только обезличенные агрегаты.
+- Health не проверяет фактическую доступность ProxyAPI/Resend, только локальную готовность конфигурации.
+- Prometheus, Redis, фоновые задачи, frontend, деплой и README на этом этапе не реализованы.

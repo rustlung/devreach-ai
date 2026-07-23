@@ -159,9 +159,10 @@ class ContactRepository:
                 owner_email=self._count_by_column(ContactRequest.owner_email_status),
                 user_email=self._count_by_column(ContactRequest.user_email_status),
                 # Метрики возвращают только агрегаты: персональные поля не выбираются и не попадают в результат.
-                by_category=self._count_by_column(ContactRequest.category, ignore_empty=True),
+                by_category=self._count_by_column(ContactRequest.category),
             )
         except SQLAlchemyError as exc:
+            self.session.rollback()
             logger.exception("event=contact_metrics_failed operation=get_metrics error_type=%s", type(exc).__name__)
             raise ContactRepositoryError("Не удалось рассчитать метрики обращений") from exc
 

@@ -25,6 +25,7 @@ from app.services.email_service import FakeEmailService, ResendEmailService
 from app.schemas.contact import ContactRequestCreate
 from app.schemas.contact_storage import AiStatus, ContactAiUpdate, ContactCategory, ContactPriority, EmailStatus, ProcessingStatus, Sentiment
 from app.core.rate_limiter import SlidingWindowRateLimiter
+from app.services.diagnostics import build_health_response, build_metrics_response, measure_database_health
 
 
 def check_foundation(settings: Settings | None = None) -> int:
@@ -510,6 +511,101 @@ def check_rate_limit() -> int:
     return 0
 
 
+def check_diagnostics() -> int:
+    temp_dir = tempfile.TemporaryDirectory()
+    database_path = Path(temp_dir.name) / "diagnostics.sqlite3"
+    engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False}, future=True)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    session = None
+
+    try:
+        Base.metadata.create_all(engine)
+        diagnostic_settings = Settings(
+            APP_ENV="test",
+            DATABASE_URL=f"sqlite:///{database_path}",
+            LOG_FILE_PATH=str(Path(temp_dir.name) / "diagnostics.log"),
+            AI_LIVE_REQUESTS_ENABLED=False,
+            EMAIL_LIVE_REQUESTS_ENABLED=False,
+        )
+
+        database = measure_database_health(diagnostic_settings)
+        health = build_health_response(diagnostic_settings, database)
+        if health.database.status != "available":
+            raise AssertionError("Health не подтвердил доступность базы")
+        print("Проверка health: успешно")
+        print("Статус базы данных: available")
+        if health.database.latency_ms is None or health.database.latency_ms < 0:
+            raise AssertionError("Latency базы не измерен")
+        print("Измерение latency базы: успешно")
+        print("Проверка конфигурации AI без внешнего вызова: успешно")
+        print("Проверка конфигурации email без внешнего вызова: успешно")
+
+        session = session_factory()
+        repository = ContactRepository(session)
+        empty_metrics = build_metrics_response(repository.get_metrics(), request_id="cli-diagnostics")
+        if empty_metrics.total_contacts != 0 or any(empty_metrics.processing.values()):
+            raise AssertionError("Метрики пустой базы не равны нулю")
+        print("Метрики пустой базы: успешно")
+
+        first = repository.create(_base_contact_payload_as_schema(email="diagnostic-one@example.com"))
+        second = repository.create(_base_contact_payload_as_schema(email="diagnostic-two@example.com"))
+        repository.update_ai_result(
+            first.id,
+            ContactAiUpdate(ai_status=AiStatus.SUCCESS, category=ContactCategory.PROJECT_REQUEST.value),
+        )
+        repository.update_owner_email_status(first.id, EmailStatus.SENT)
+        repository.update_user_email_status(first.id, EmailStatus.SENT)
+        repository.update_processing_status(first.id, ProcessingStatus.COMPLETED)
+        repository.update_ai_result(
+            second.id,
+            ContactAiUpdate(ai_status=AiStatus.FALLBACK, category=ContactCategory.OTHER.value),
+        )
+        repository.update_owner_email_status(second.id, EmailStatus.FAILED, "Тестовая ошибка")
+        repository.update_user_email_status(second.id, EmailStatus.SKIPPED)
+        repository.update_processing_status(second.id, ProcessingStatus.COMPLETED_WITH_ERRORS)
+        print("Создание тестовых обращений: успешно")
+
+        metrics = build_metrics_response(repository.get_metrics(), request_id="cli-diagnostics")
+        if metrics.processing[ProcessingStatus.COMPLETED.value] != 1:
+            raise AssertionError("Агрегация processing status некорректна")
+        print("Агрегация processing status: успешно")
+        if metrics.ai[AiStatus.SUCCESS.value] != 1 or metrics.ai[AiStatus.FALLBACK.value] != 1:
+            raise AssertionError("Агрегация AI status некорректна")
+        print("Агрегация AI status: успешно")
+        if metrics.emails.owner[EmailStatus.FAILED.value] != 1 or metrics.emails.user[EmailStatus.SKIPPED.value] != 1:
+            raise AssertionError("Агрегация email status некорректна")
+        print("Агрегация email status: успешно")
+        if metrics.categories[ContactCategory.PROJECT_REQUEST.value] != 1 or metrics.categories[ContactCategory.OTHER.value] != 1:
+            raise AssertionError("Агрегация категорий некорректна")
+        print("Агрегация категорий: успешно")
+
+        metrics_text = metrics.model_dump_json()
+        if any(secret in metrics_text for secret in ["Иван Иванов", "diagnostic-one@example.com", "+79991234567", "Тестовая ошибка"]):
+            raise AssertionError("В метрики попали персональные данные")
+        print("Проверка отсутствия персональных данных: успешно")
+
+    except Exception as exc:
+        print("Итог: диагностическая проверка завершилась ошибкой")
+        print(f"Причина: {exc}")
+        return 1
+    finally:
+        if session is not None:
+            session.close()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+        temp_dir.cleanup()
+        print("Удаление временной базы: успешно")
+
+    print("\nProxyAPI: не вызывался")
+    print("Resend: не вызывался")
+    print("\nИтог: диагностические endpoint готовы")
+    return 0
+
+
+def _base_contact_payload_as_schema(**overrides) -> ContactRequestCreate:
+    return ContactRequestCreate(**_base_contact_payload(**overrides))
+
+
 def _print_ai_result(result) -> None:
     print(f"Тональность: {result.analysis.sentiment.value}")
     print(f"Категория: {result.analysis.category.value}")
@@ -541,6 +637,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("validate-contact", help="Проверить схемы и валидацию обращения без API")
     subparsers.add_parser("check-repository", help="Проверить репозиторий обращений на временной SQLite")
     subparsers.add_parser("check-rate-limit", help="Проверить rate limiting без FastAPI и внешних сервисов")
+    subparsers.add_parser("check-diagnostics", help="Проверить health и metrics без внешних сервисов")
     subparsers.add_parser("render-emails", help="Отрендерить preview email-шаблонов без отправки")
     email_parser = subparsers.add_parser("check-email", help="Проверить email-сервис")
     email_parser.add_argument("--live", action="store_true", help="Отправить одно тестовое письмо через Resend")
@@ -564,6 +661,8 @@ def main(argv: list[str] | None = None) -> int:
         return check_repository()
     if args.command == "check-rate-limit":
         return check_rate_limit()
+    if args.command == "check-diagnostics":
+        return check_diagnostics()
     if args.command == "render-emails":
         return render_emails()
     if args.command == "check-email":

@@ -21,13 +21,13 @@
 
 ### HEALTH-001
 
-Успешный `GET /api/health` возвращает `status=ok`, имя сервиса, версию и `database=available`.
+Успешный `GET /api/health` возвращает `status=ok` или `status=degraded`, имя сервиса, версию, environment, latency БД и статусы конфигурации integrations.
 
 Файл теста: `tests/integration/test_health.py`.
 
 ### HEALTH-002
 
-При недоступной SQLite БД `GET /api/health` возвращает HTTP 503, безопасное сообщение и не раскрывает traceback.
+При недоступной SQLite БД `GET /api/health` возвращает HTTP 503, `status=unavailable`, безопасное сообщение и не раскрывает traceback.
 
 Файл теста: `tests/integration/test_health.py`.
 
@@ -284,6 +284,36 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | RATE-LIMIT-API-INVALID-001 | Невалидный запрос учитывается в лимите | API, лимит 1 | Невалидный POST, затем валидный | POST `/api/contact` | Первый 422, второй 429, pipeline не вызван | Integration | `test_invalid_contact_request_counts_toward_rate_limit` | `tests/integration/test_contact_rate_limit.py` |
 | HONEYPOT-API-001 | Honeypot не создаёт запись и логируется | API, fake services | `website=bot` | POST `/api/contact` | HTTP 422, записи нет, pipeline не вызван, событие в логах | Integration | `test_honeypot_request_does_not_create_contact_and_is_logged` | `tests/integration/test_contact_rate_limit.py` |
 
+## Автоматические сценарии этапа 8
+
+Все проверки этапа 8 выполняются без ProxyAPI и Resend. Health проверяет только локальную БД и готовность конфигурации, metrics возвращает только обезличенные агрегаты.
+
+| ID | Описание | Предусловия | Входные данные | Шаги | Ожидаемый результат | Тип теста | Тестовая функция | Файл теста |
+| -- | -------- | ----------- | -------------- | ---- | ------------------- | -------- | ---------------- | ---------- |
+| METRICS-SCHEMA-001 | Валидная схема метрик принимается | Нет | Валидный payload | Создать `ContactMetricsResponse` | Схема создана | Unit | `test_valid_metrics_response_is_accepted` | `tests/unit/test_metrics_schema.py` |
+| METRICS-SCHEMA-002 | Отрицательные значения отклоняются | Нет | Negative counts | Создать schema | `ValidationError` | Unit | `test_negative_metric_values_are_rejected` | `tests/unit/test_metrics_schema.py` |
+| METRICS-SCHEMA-003 | `generated_at` timezone-aware | Нет | Naive datetime | Создать schema | `ValidationError` | Unit | `test_generated_at_must_be_timezone_aware` | `tests/unit/test_metrics_schema.py` |
+| METRICS-SCHEMA-004 | `request_id` обязателен | Нет | Payload без request_id | Создать schema | `ValidationError` | Unit | `test_request_id_is_required` | `tests/unit/test_metrics_schema.py` |
+| METRICS-SCHEMA-005 | Пустые метрики имеют стабильную структуру | Пустой `ContactMetrics` | Нет агрегатов | `build_metrics_response()` | Все enum-ключи есть с нулями | Unit | `test_empty_metrics_have_stable_structure` | `tests/unit/test_metrics_schema.py` |
+| METRICS-SCHEMA-006 | Лишние персональные поля запрещены | Нет | `email` в response | Создать schema | `ValidationError` | Unit | `test_extra_personal_fields_are_forbidden` | `tests/unit/test_metrics_schema.py` |
+| METRICS-SCHEMA-007 | Вложенная email-схема запрещает лишние поля | Нет | `email` в `EmailMetrics` | Создать schema | `ValidationError` | Unit | `test_email_metrics_forbids_extra_fields` | `tests/unit/test_metrics_schema.py` |
+| HEALTH-EXTENDED-001 | Health ok при доступной БД и configured integrations | Временная SQLite | Настроенные env | GET `/api/health` и health function | `status=ok`, latency >= 0 | Unit/Integration | `test_health_is_ok_when_database_and_integrations_are_configured`, `test_health_check_returns_ok_when_database_is_available` | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` |
+| HEALTH-DEGRADED-AI-001 | Health degraded при отключённом AI | Временная SQLite | `AI_LIVE_REQUESTS_ENABLED=false` | GET `/api/health` | HTTP 200, `ai=disabled`, `status=degraded` | Unit/Integration | `test_health_is_degraded_when_ai_is_disabled`, `test_health_check_returns_degraded_when_ai_is_disabled` | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` |
+| HEALTH-DEGRADED-EMAIL-001 | Health degraded при ненастроенном email | Временная SQLite | Нет Resend key | GET `/api/health` | HTTP 200, `email=not_configured` | Unit/Integration | `test_health_is_degraded_when_email_is_not_configured`, `test_health_check_returns_degraded_when_email_is_not_configured` | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` |
+| HEALTH-DEGRADED-BOTH-001 | Health degraded при отключённых integrations | Временная SQLite | AI/email disabled | Вызвать health logic | `status=degraded` | Unit | `test_health_is_degraded_when_integrations_are_disabled` | `tests/unit/test_health_service.py` |
+| HEALTH-DATABASE-UNAVAILABLE-001 | Health unavailable при недоступной БД | Некорректный SQLite path | GET `/api/health` | HTTP 503, безопасный body | Unit/Integration | `test_database_health_raises_when_database_is_unavailable`, `test_health_check_returns_safe_error_when_database_is_unavailable` | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` |
+| HEALTH-NO-EXTERNAL-CALLS-001 | Health не вызывает ProxyAPI/Resend | Provider clients заменены ошибками | GET `/api/health` | HTTP 200 без внешних вызовов | Unit/Integration | `test_health_does_not_create_ai_or_resend_clients`, `test_health_check_does_not_expose_secrets_or_call_external_services` | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` |
+| HEALTH-SECRETS-001 | Health не раскрывает секреты | Тестовые ключи | GET `/api/health` | Ключей нет в response/logs | Unit/Integration | `test_health_does_not_expose_secrets`, `test_health_check_does_not_expose_secrets_or_call_external_services` | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` |
+| HEALTH-REQUEST-ID-001 | Request ID совпадает в health body/header | `X-Request-ID` | GET `/api/health` | Body и header содержат один ID | Integration | `test_health_check_returns_ok_when_database_is_available` | `tests/integration/test_health.py` |
+| HEALTH-OPENAPI-001 | Health schema зарегистрирована в OpenAPI | API app | Нет | GET `/openapi.json` | 200/503 и `HealthResponse` есть | Integration | `test_health_openapi_schema_contains_extended_contract` | `tests/integration/test_health.py` |
+| METRICS-EMPTY-001 | Пустая база возвращает нулевые метрики | Временная SQLite | Нет записей | GET `/api/metrics` | HTTP 200, все значения 0 | Integration | `test_metrics_empty_database_returns_zero_values` | `tests/integration/test_metrics_api.py` |
+| METRICS-AGGREGATION-001 | Заполненная база возвращает точные агрегаты | Временная SQLite | 3 записи | GET `/api/metrics` | Точные processing/AI/email counts | Integration | `test_metrics_populated_database_returns_exact_aggregates` | `tests/integration/test_metrics_api.py` |
+| METRICS-CATEGORIES-001 | Категории агрегируются с unknown | Временная SQLite | Known и legacy category | GET `/api/metrics` | Known counts и `unknown=1` | Integration | `test_metrics_populated_database_returns_exact_aggregates` | `tests/integration/test_metrics_api.py` |
+| METRICS-NO-PII-001 | Metrics не содержит персональные данные | Временная SQLite с PII | Записи с именами/email/comment | GET `/api/metrics` | PII keys/values отсутствуют | Integration | `test_metrics_response_does_not_contain_personal_data` | `tests/integration/test_metrics_api.py` |
+| METRICS-DATABASE-FAILED-001 | Metrics возвращает безопасный 503 при ошибке БД | Broken repository | Нет | GET `/api/metrics` | HTTP 503 без SQL/traceback | Integration | `test_metrics_database_error_returns_safe_503` | `tests/integration/test_metrics_api.py` |
+| METRICS-NO-RATE-LIMIT-001 | Metrics и health не ограничиваются contact limiter | Contact limiter limit=1 | Несколько GET | GET `/api/metrics`, `/api/health` | Нет HTTP 429 | Integration | `test_metrics_and_health_are_not_contact_rate_limited` | `tests/integration/test_metrics_api.py` |
+| METRICS-OPENAPI-001 | Metrics endpoint зарегистрирован в OpenAPI | API app | Нет | GET `/openapi.json` | 200/503 и schema есть | Integration | `test_metrics_openapi_contains_endpoint_and_responses` | `tests/integration/test_metrics_api.py` |
+
 ## Ручные сценарии
 
 - Выполнить `alembic upgrade head` из корня проекта.
@@ -478,6 +508,29 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | RATE-LIMIT-API-WINDOW-001 | Истечение окна разрешает новый API-запрос | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
 | RATE-LIMIT-API-INVALID-001 | Невалидный запрос учитывается в лимите | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
 | HONEYPOT-API-001 | Honeypot не создаёт запись и логируется | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
+| METRICS-SCHEMA-001 | Валидная схема метрик принимается | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
+| METRICS-SCHEMA-002 | Отрицательные значения метрик отклоняются | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
+| METRICS-SCHEMA-003 | `generated_at` требует timezone | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
+| METRICS-SCHEMA-004 | `request_id` обязателен | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
+| METRICS-SCHEMA-005 | Пустые метрики имеют стабильную структуру | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
+| METRICS-SCHEMA-006 | Лишние персональные поля запрещены | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
+| METRICS-SCHEMA-007 | Вложенная email-схема запрещает лишние поля | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
+| HEALTH-EXTENDED-001 | Health ok при доступной БД и configured integrations | Unit/Integration | Да | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` | [x] |
+| HEALTH-DEGRADED-AI-001 | Health degraded при отключённом AI | Unit/Integration | Да | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` | [x] |
+| HEALTH-DEGRADED-EMAIL-001 | Health degraded при ненастроенном email | Unit/Integration | Да | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` | [x] |
+| HEALTH-DEGRADED-BOTH-001 | Health degraded при отключённых integrations | Unit | Да | `tests/unit/test_health_service.py` | [x] |
+| HEALTH-DATABASE-UNAVAILABLE-001 | Health unavailable при недоступной БД | Unit/Integration | Да | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` | [x] |
+| HEALTH-NO-EXTERNAL-CALLS-001 | Health не вызывает ProxyAPI/Resend | Unit/Integration | Да | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` | [x] |
+| HEALTH-SECRETS-001 | Health не раскрывает секреты | Unit/Integration | Да | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` | [x] |
+| HEALTH-REQUEST-ID-001 | Request ID совпадает в health body/header | Integration | Да | `tests/integration/test_health.py` | [x] |
+| HEALTH-OPENAPI-001 | Health schema зарегистрирована в OpenAPI | Integration | Да | `tests/integration/test_health.py` | [x] |
+| METRICS-EMPTY-001 | Пустая база возвращает нулевые метрики | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
+| METRICS-AGGREGATION-001 | Заполненная база возвращает точные агрегаты | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
+| METRICS-CATEGORIES-001 | Категории агрегируются с unknown | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
+| METRICS-NO-PII-001 | Metrics не содержит персональные данные | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
+| METRICS-DATABASE-FAILED-001 | Metrics возвращает безопасный 503 при ошибке БД | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
+| METRICS-NO-RATE-LIMIT-001 | Metrics и health не ограничиваются contact limiter | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
+| METRICS-OPENAPI-001 | Metrics endpoint зарегистрирован в OpenAPI | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
 
 ## Финальный checklist перед сдачей проекта
 
