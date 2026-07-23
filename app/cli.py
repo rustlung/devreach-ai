@@ -3,14 +3,22 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import tempfile
+from pathlib import Path
 
 from pydantic import ValidationError
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.api.routes.health import get_health
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
+from app.db.base import Base
+from app.db.models import ContactRequest
 from app.db.session import check_database_connection
+from app.repositories.contact_repository import ContactRepository
 from app.schemas.contact import ContactRequestCreate
+from app.schemas.contact_storage import AiStatus, ContactAiUpdate, EmailStatus, ProcessingStatus
 
 
 def check_foundation(settings: Settings | None = None) -> int:
@@ -131,6 +139,78 @@ def validate_contact() -> int:
     return 0
 
 
+def check_repository() -> int:
+    temp_dir = tempfile.TemporaryDirectory()
+    database_path = Path(temp_dir.name) / "repository-check.sqlite3"
+    engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False}, future=True)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    session = None
+
+    try:
+        Base.metadata.create_all(engine)
+        print("Создание временной базы: успешно")
+
+        session = session_factory()
+        repository = ContactRepository(session)
+        contact = repository.create(
+            ContactRequestCreate(
+                name="Иван Иванов",
+                phone="+7 999 123 45 67",
+                email="user@example.com",
+                comment="Здравствуйте, хочу обсудить тестовый проект.",
+            )
+        )
+        print(f"Создание обращения: успешно, ID={contact.id}")
+
+        if repository.get_by_id(contact.id) is None:
+            raise AssertionError("Созданное обращение не найдено по ID")
+        print("Чтение обращения: успешно")
+
+        repository.update_ai_result(
+            contact.id,
+            ContactAiUpdate(
+                sentiment="positive",
+                category="web",
+                priority="high",
+                ai_summary="Тестовое резюме",
+                suggested_reply="Тестовый ответ",
+                ai_status=AiStatus.SUCCESS,
+            ),
+        )
+        print("Обновление AI-результата: успешно")
+
+        repository.update_owner_email_status(contact.id, EmailStatus.SENT)
+        print("Обновление статуса письма владельцу: успешно")
+
+        repository.update_user_email_status(contact.id, EmailStatus.FAILED, "Тестовая ошибка письма")
+        print("Обновление статуса письма пользователю: успешно")
+
+        repository.update_processing_status(contact.id, ProcessingStatus.COMPLETED_WITH_ERRORS)
+        print("Обновление общего статуса: успешно")
+
+        metrics = repository.get_metrics()
+        if metrics.total_contacts != 1 or metrics.by_category.get("web") != 1:
+            raise AssertionError("Метрики репозитория не совпали с ожидаемыми")
+        print("Проверка метрик: успешно")
+
+    except Exception as exc:
+        logging.getLogger("app.cli").exception("CLI-проверка репозитория завершилась ошибкой")
+        print(f"Итог: проверка репозитория завершилась ошибкой на этапе: {type(exc).__name__}")
+        print(f"Причина: {exc}")
+        return 1
+    finally:
+        if session is not None:
+            session.close()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+        temp_dir.cleanup()
+        print("Удаление временной базы: успешно")
+
+    _ = ContactRequest
+    print("\nИтог: репозиторий обращений работает корректно")
+    return 0
+
+
 def _assert_equal(actual, expected) -> None:
     if actual != expected:
         raise AssertionError("Фактический результат не совпал с ожидаемым")
@@ -145,12 +225,15 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("check-foundation", help="Проверить фундамент проекта без внешних API")
     subparsers.add_parser("validate-contact", help="Проверить схемы и валидацию обращения без API")
+    subparsers.add_parser("check-repository", help="Проверить репозиторий обращений на временной SQLite")
 
     args = parser.parse_args(argv)
     if args.command == "check-foundation":
         return check_foundation()
     if args.command == "validate-contact":
         return validate_contact()
+    if args.command == "check-repository":
+        return check_repository()
     return 1
 
 

@@ -120,6 +120,34 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | NORMALIZATION-NAME-001 | Лишние пробелы в имени не попадают в итоговые данные | Нет | имя с лишними пробелами | `Иван Иванов` | Unit | `test_extra_name_spaces_are_not_returned` | `tests/unit/test_contact_schema.py` |
 | VALIDATION-HONEYPOT-001 | Заполненный honeypot отклоняет обращение | Нет | `website` заполнен | Ошибка служебного поля | Unit | `test_filled_honeypot_is_rejected` | `tests/unit/test_contact_schema.py` |
 
+## Автоматические сценарии этапа 3
+
+Все проверки этапа 3 выполняются без `POST /api/contact`, OpenAI, email, frontend и production-базы. Unit-тесты репозитория используют временную SQLite через `tmp_path`; integration-тесты проверяют Alembic на отдельной временной SQLite.
+
+| ID | Описание | Предусловия | Входные данные | Шаги | Ожидаемый результат | Тип теста | Тестовая функция | Файл теста |
+| -- | -------- | ----------- | -------------- | ---- | ------------------- | -------- | ---------------- | ---------- |
+| REPOSITORY-CREATE-001 | Валидное обращение создаётся и получает ID | Временная SQLite | `ContactRequestCreate` | Вызвать `create()` | Запись сохранена, ID присвоен, поля нормализованы | Unit | `test_create_contact_persists_valid_request` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-CREATE-002 | При создании выставляются начальные статусы | Временная SQLite | Валидное обращение | Вызвать `create()` | `received`, `pending`, `pending`, `pending` | Unit | `test_create_contact_sets_initial_statuses` | `tests/unit/test_contact_repository.py` |
+| DATABASE-MODEL-001 | При создании устанавливаются UTC-метки | Временная SQLite | Валидное обращение | Вызвать `create()` | `created_at` и `updated_at` в UTC | Unit | `test_create_contact_sets_utc_timestamps` | `tests/unit/test_contact_repository.py` |
+| DATABASE-MODEL-003 | `updated_at` меняется при обновлении | Временная SQLite | Созданное обращение | Обновить processing status | `updated_at` больше исходного значения | Unit | `test_updated_at_changes_after_update` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-GET-001 | Существующее обращение возвращается по ID | Временная SQLite | Созданное обращение | Вызвать `get_by_id()` | Возвращена модель | Unit | `test_get_by_id_returns_existing_contact` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-GET-002 | Несуществующее обращение возвращает `None` | Временная SQLite | ID 999 | Вызвать `get_by_id()` | Возвращён `None` | Unit | `test_get_by_id_returns_none_for_missing_contact` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-AI-UPDATE-001 | AI-поля сохраняются | Временная SQLite | AI update | Вызвать `update_ai_result()` | Все AI-поля обновлены | Unit | `test_update_ai_result_saves_all_ai_fields` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-AI-UPDATE-002 | AI error сохраняется | Временная SQLite | `ai_status=failed`, error | Вызвать `update_ai_result()` | Статус и ошибка сохранены | Unit | `test_update_ai_result_can_save_error` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-AI-UPDATE-003 | AI-обновление не меняет исходные данные | Временная SQLite | Созданное обращение | Обновить AI | Name/phone/email/comment не изменены | Unit | `test_update_ai_result_does_not_change_original_fields` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-AI-UPDATE-004 | AI-обновление отсутствующего ID отклоняется | Временная SQLite | ID 999 | Вызвать `update_ai_result()` | `ContactNotFoundError` | Unit | `test_update_ai_result_rejects_missing_contact` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-EMAIL-UPDATE-001 | Статус письма владельцу обновляется отдельно | Временная SQLite | `owner=sent` | Вызвать `update_owner_email_status()` | User email status не перезаписан | Unit | `test_update_owner_email_status_updates_only_owner` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-EMAIL-UPDATE-002 | Статус письма пользователю обновляется отдельно | Временная SQLite | `user=failed`, error | Вызвать `update_user_email_status()` | Owner email status не перезаписан | Unit | `test_update_user_email_status_updates_only_user` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-EMAIL-UPDATE-003 | Оба email-статуса можно обновить одной операцией | Временная SQLite | Owner/user statuses | Вызвать `update_email_statuses()` | Оба статуса сохранены | Unit | `test_update_email_statuses_can_update_both_statuses` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-STATUS-001 | Общий статус обработки обновляется отдельно | Временная SQLite | `completed` | Вызвать `update_processing_status()` | Остальные поля не изменены | Unit | `test_update_processing_status_changes_only_processing_status` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-METRICS-001 | Пустая база возвращает нулевые метрики | Пустая SQLite | Нет | Вызвать `get_metrics()` | Все агрегаты пустые/нулевые | Unit | `test_get_metrics_returns_zero_values_for_empty_database` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-METRICS-002 | Несколько записей корректно агрегируются | Временная SQLite | 2 обращения с разными статусами | Вызвать `get_metrics()` | Счётчики по статусам и категориям корректны | Unit | `test_get_metrics_aggregates_multiple_contacts` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-METRICS-003 | Метрики не содержат персональные данные | Временная SQLite | Валидное обращение | Проверить результат `get_metrics()` | Нет имени, email, телефона, комментария | Unit | `test_get_metrics_does_not_return_personal_data` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-ROLLBACK-001 | Ошибка сохранения выполняет rollback | Временная SQLite | Контролируемая ошибка commit | Вызвать `create()` | Rollback выполнен, сессия пригодна дальше | Unit | `test_create_rolls_back_after_database_error` | `tests/unit/test_contact_repository.py` |
+| DATABASE-MIGRATION-001 | Alembic upgrade создаёт таблицу обращений | Временная SQLite | Миграции Alembic | `upgrade head` | Таблица и ключевые поля созданы | Integration | `test_alembic_upgrade_creates_contact_requests_table` | `tests/integration/test_database.py` |
+| DATABASE-MODEL-002 | Модель совместима с актуальной миграцией | Временная SQLite после миграции | Валидное обращение | Создать через repository | Запись создаётся и читается | Integration | `test_repository_works_with_migrated_database` | `tests/integration/test_database.py` |
+| DATABASE-MIGRATION-002 | Alembic downgrade удаляет таблицу обращений | Временная SQLite | Миграции Alembic | `upgrade head`, `downgrade -1` | Таблица удалена | Integration | `test_alembic_downgrade_removes_contact_requests_table` | `tests/integration/test_database.py` |
+
 ## Ручные сценарии
 
 - Выполнить `alembic upgrade head` из корня проекта.
@@ -195,6 +223,27 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | NORMALIZATION-COMMENT-002 | Внутренние пробелы комментария не изменяются | Unit | Да | `tests/unit/test_contact_schema.py` | [x] |
 | NORMALIZATION-NAME-001 | Лишние пробелы в имени не попадают в итоговые данные | Unit | Да | `tests/unit/test_contact_schema.py` | [x] |
 | VALIDATION-HONEYPOT-001 | Заполненный honeypot отклоняет обращение | Unit | Да | `tests/unit/test_contact_schema.py` | [x] |
+| REPOSITORY-CREATE-001 | Валидное обращение создаётся и получает ID | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-CREATE-002 | При создании выставляются начальные статусы | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| DATABASE-MODEL-001 | При создании устанавливаются UTC-метки | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| DATABASE-MODEL-003 | `updated_at` меняется при обновлении | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-GET-001 | Существующее обращение возвращается по ID | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-GET-002 | Несуществующее обращение возвращает `None` | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-AI-UPDATE-001 | AI-поля сохраняются | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-AI-UPDATE-002 | AI error сохраняется | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-AI-UPDATE-003 | AI-обновление не меняет исходные данные | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-AI-UPDATE-004 | AI-обновление отсутствующего ID отклоняется | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-EMAIL-UPDATE-001 | Статус письма владельцу обновляется отдельно | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-EMAIL-UPDATE-002 | Статус письма пользователю обновляется отдельно | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-EMAIL-UPDATE-003 | Оба email-статуса можно обновить одной операцией | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-STATUS-001 | Общий статус обработки обновляется отдельно | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-METRICS-001 | Пустая база возвращает нулевые метрики | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-METRICS-002 | Несколько записей корректно агрегируются | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-METRICS-003 | Метрики не содержат персональные данные | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| REPOSITORY-ROLLBACK-001 | Ошибка сохранения выполняет rollback | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| DATABASE-MIGRATION-001 | Alembic upgrade создаёт таблицу обращений | Integration | Да | `tests/integration/test_database.py` | [x] |
+| DATABASE-MODEL-002 | Модель совместима с актуальной миграцией | Integration | Да | `tests/integration/test_database.py` | [x] |
+| DATABASE-MIGRATION-002 | Alembic downgrade удаляет таблицу обращений | Integration | Да | `tests/integration/test_database.py` | [x] |
 
 ## Финальный checklist перед сдачей проекта
 
