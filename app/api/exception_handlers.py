@@ -20,21 +20,36 @@ def error_payload(code: str, message: str, details: list | None = None) -> dict:
     }
 
 
+def _make_json_safe(value):
+    if isinstance(value, dict):
+        return {key: _make_json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_make_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_make_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
+    # Pydantic может положить исходный ValueError в ctx.error. Перед JSONResponse
+    # приводим такие объекты к строке, чтобы обработчик 422 сам не превращался в 500.
+    safe_errors = _make_json_safe(exc.errors())
     logger.warning(
         "Ошибка валидации входящего HTTP-запроса: method=%s path=%s errors=%s",
         request.method,
         request.url.path,
-        exc.errors(),
+        safe_errors,
     )
     return JSONResponse(
         status_code=422,
         content=error_payload(
             code="validation_error",
             message="Переданные данные не прошли проверку",
-            details=exc.errors(),
+            details=safe_errors,
         ),
     )
 

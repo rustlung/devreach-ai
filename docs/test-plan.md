@@ -168,6 +168,8 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | AI-FALLBACK-TIMEOUT-001 | Fallback при timeout OpenAI | Mock exception | `APITimeoutError` | Вызвать `analyze_comment()` | `api_timeout` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
 | AI-FALLBACK-CONNECTION-001 | Fallback при ошибке соединения | Mock exception | `APIConnectionError` | Вызвать `analyze_comment()` | `api_connection_error` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
 | AI-FALLBACK-AUTH-001 | Fallback при ошибке авторизации | Mock exception | `AuthenticationError` | Вызвать `analyze_comment()` | `api_auth_error` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-PERMISSION-001 | Fallback при запрете доступа OpenAI/ProxyAPI | Mock exception | `PermissionDeniedError` | Вызвать `analyze_comment()` | `api_permission_denied` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
+| AI-FALLBACK-PERMISSION-002 | Детали запрета доступа безопасно сохраняются | Mock exception с body | `PermissionDeniedError` с code/type/message | Вызвать `analyze_comment()` | В error message есть status/code/type, секреты скрыты | Unit | `test_openai_service_includes_safe_provider_details_for_permission_denied` | `tests/unit/test_ai_service.py` |
 | AI-FALLBACK-RATE-LIMIT-001 | Fallback при rate limit | Mock exception | `RateLimitError` | Вызвать `analyze_comment()` | `api_rate_limit` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
 | AI-FALLBACK-API-001 | Fallback при общей API-ошибке | Mock exception | `APIError` | Вызвать `analyze_comment()` | `api_error` | Unit | `test_openai_service_returns_fallback_for_provider_errors` | `tests/unit/test_ai_service.py` |
 | AI-FALLBACK-INVALID-RESPONSE-001 | Fallback при невалидном structured output | Mock response | Unknown enum | Вызвать `analyze_comment()` | `invalid_structured_output` | Unit | `test_openai_service_returns_fallback_for_invalid_response` | `tests/unit/test_ai_service.py` |
@@ -178,12 +180,13 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | AI-FAKE-002 | Fake fallback возвращает fallback | Нет | Тестовый комментарий | Вызвать fake service | `status=fallback` | Unit | `test_fake_service_returns_fallback` | `tests/unit/test_ai_service.py` |
 | AI-FAKE-003 | Fake error имитирует исключение | Нет | Тестовый комментарий | Вызвать fake service | `RuntimeError` | Unit | `test_fake_service_can_raise_error` | `tests/unit/test_ai_service.py` |
 | AI-FAKE-004 | Fake service не создаёт OpenAI-клиент | OpenAI constructor заменён ошибкой | Тестовый комментарий | Вызвать fake service | Клиент не создан | Unit | `test_fake_service_does_not_create_openai_client` | `tests/unit/test_ai_service.py` |
+| AI-PROXY-001 | OpenAI SDK получает custom base_url | Mock OpenAI constructor | `OPENAI_BASE_URL=https://api.proxyapi.ru/openai/v1` | Вызвать `analyze_comment()` | Клиент создан с `base_url` | Unit | `test_openai_client_is_created_with_custom_base_url` | `tests/unit/test_ai_service.py` |
 
 ## Ручные сценарии этапа 4
 
 | ID | Сценарий | Предусловия | Команда | Ожидаемый результат | Пройдено |
 | -- | -------- | ----------- | ------- | ------------------- | -------- |
-| AI-LIVE-001 | Один контролируемый live-запрос OpenAI | `OPENAI_API_KEY` задан, `AI_LIVE_REQUESTS_ENABLED=true`, пользователь явно запускает команду | `python -m app.cli analyze-comment --live` | Один structured-output ответ или fallback без падения приложения | [ ] |
+| AI-LIVE-001 | Один контролируемый live-запрос через ProxyAPI | ключ ProxyAPI задан в `OPENAI_API_KEY`, `OPENAI_BASE_URL=https://api.proxyapi.ru/openai/v1`, `AI_LIVE_REQUESTS_ENABLED=true`, пользователь явно запускает команду | `python -m app.cli analyze-comment --live` | Один structured-output ответ без прямого OpenAI API | [x] |
 
 ## Автоматические сценарии этапа 5
 
@@ -208,6 +211,7 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | EMAIL-SEND-RESULT-001 | Успешный ответ сохраняет message id | Mock Resend | Ответ с `id` | Вызвать `send()` | `status=sent`, `message_id` сохранён | Unit | `test_successful_resend_response_returns_sent_status` | `tests/unit/test_email_service.py` |
 | EMAIL-SKIPPED-DISABLED-001 | Live отключён возвращает skipped | Mock Resend | `EMAIL_LIVE_REQUESTS_ENABLED=false` | Вызвать `send()` | SDK не вызван, `status=skipped` | Unit | `test_disabled_live_requests_return_skipped` | `tests/unit/test_email_service.py` |
 | EMAIL-FAILED-CONFIG-001 | Отсутствующие настройки обрабатываются | Mock Resend | нет ключа/sender/owner | Вызвать send-методы | `status=failed`, конкретный error_code | Unit | `test_missing_email_settings_are_handled` | `tests/unit/test_email_service.py` |
+| EMAIL-FAILED-CONFIG-002 | Sender с именем в `EMAIL_FROM_ADDRESS` отклоняется до Resend SDK | Mock Resend | `EMAIL_FROM_ADDRESS=Name <onboarding@resend.dev>` | Вызвать `send()` | `invalid_sender`, внешний вызов не выполнен | Unit | `test_missing_email_settings_are_handled` | `tests/unit/test_email_service.py` |
 | EMAIL-FAILED-PROVIDER-001 | Ошибки Resend классифицируются | Mock Resend | auth/rate/timeout/connection/runtime | Вызвать `send()` | `status=failed`, безопасный error_code | Unit | `test_provider_errors_return_failed` | `tests/unit/test_email_service.py` |
 | EMAIL-FAILED-INVALID-RESPONSE-001 | Ответ без id считается ошибкой | Mock Resend | `{}` | Вызвать `send()` | `invalid_provider_response` | Unit | `test_invalid_provider_response_returns_failed` | `tests/unit/test_email_service.py` |
 | EMAIL-LOGGING-001 | Тело письма и PII не попадают в логи | Mock logger | email/body | Вызвать `send()` | В логах нет body и email | Unit | `test_email_body_and_personal_data_are_not_logged` | `tests/unit/test_email_service.py` |
@@ -220,6 +224,31 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | ID | Сценарий | Предусловия | Команда | Ожидаемый результат | Пройдено |
 | -- | -------- | ----------- | ------- | ------------------- | -------- |
 | EMAIL-LIVE-001 | Одно контролируемое live-письмо через Resend | `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`, `EMAIL_LIVE_REQUESTS_ENABLED=true`, явный получатель | `python -m app.cli check-email --live --recipient test@example.com` | Отправлено одно тестовое письмо или безопасная ошибка без раскрытия секретов | [ ] |
+
+## Автоматические сценарии этапа 6
+
+Все проверки этапа 6 выполняются с fake AI/email или замоканными ошибками. Реальные OpenAI и Resend не вызываются.
+
+| ID | Описание | Предусловия | Входные данные | Шаги | Ожидаемый результат | Тип теста | Тестовая функция | Файл теста |
+| -- | -------- | ----------- | -------------- | ---- | ------------------- | -------- | ---------------- | ---------- |
+| PIPELINE-SUCCESS-001 | Полный pipeline успешно завершается | Временная SQLite, fake AI/email | Валидное обращение | Вызвать `ContactService.process_contact()` | Запись, AI, оба email и `completed` сохранены | Unit | `test_contact_service_processes_full_success` | `tests/unit/test_contact_service.py` |
+| PIPELINE-AI-FALLBACK-001 | AI fallback не останавливает pipeline | Временная SQLite, fake AI fallback | Валидное обращение | Вызвать service | `ai_status=fallback`, письма отправлены, `completed_with_errors` | Unit | `test_contact_service_continues_after_ai_fallback` | `tests/unit/test_contact_service.py` |
+| PIPELINE-AI-EXCEPTION-001 | Исключение AI превращается в fallback | Временная SQLite, AI raises | Валидное обращение | Вызвать service | Fallback сохранён, email-этап продолжается | Unit | `test_contact_service_converts_ai_exception_to_fallback` | `tests/unit/test_contact_service.py` |
+| PIPELINE-OWNER-EMAIL-FAILED-001 | Ошибка письма владельцу не отменяет письмо пользователю | Временная SQLite, owner failed | Валидное обращение | Вызвать service | owner `failed`, user `sent`, `completed_with_errors` | Unit | `test_owner_email_failure_does_not_stop_user_email` | `tests/unit/test_contact_service.py` |
+| PIPELINE-USER-EMAIL-FAILED-001 | Ошибка письма пользователю не отменяет письмо владельцу | Временная SQLite, user failed | Валидное обращение | Вызвать service | owner `sent`, user `failed`, `completed_with_errors` | Unit | `test_user_email_failure_does_not_cancel_owner_email` | `tests/unit/test_contact_service.py` |
+| PIPELINE-EMAILS-FAILED-001 | Оба письма failed не роняют pipeline | Временная SQLite, оба email failed | Валидное обращение | Вызвать service | AI сохранён, оба email `failed`, `completed_with_errors` | Unit | `test_both_email_failures_keep_ai_result` | `tests/unit/test_contact_service.py` |
+| PIPELINE-EMAIL-SKIPPED-001 | Skipped email считается частичной ошибкой | Временная SQLite, оба email skipped | Валидное обращение | Вызвать service | Email `skipped`, итог `completed_with_errors` | Unit | `test_skipped_email_results_in_completed_with_errors` | `tests/unit/test_contact_service.py` |
+| PIPELINE-REPOSITORY-CREATE-FAILED-001 | Ошибка create останавливает внешние этапы | Repository create raises | Валидное обращение | Вызвать service | AI/email не вызваны, service error | Unit | `test_repository_create_error_stops_external_stages` | `tests/unit/test_contact_service.py` |
+| PIPELINE-REPOSITORY-UPDATE-FAILED-001 | Ошибка сохранения AI критична | Repository AI update raises | Валидное обращение | Вызвать service | Email не отправляется, service error | Unit | `test_repository_ai_update_error_stops_email` | `tests/unit/test_contact_service.py` |
+| PIPELINE-REPOSITORY-EMAIL-UPDATE-FAILED-001 | Ошибка сохранения email-статуса критична | Repository email update raises | Валидное обращение | Вызвать service | Отправка могла состояться, но service error поднят | Unit | `test_repository_email_status_update_error_is_critical` | `tests/unit/test_contact_service.py` |
+| PIPELINE-STATUS-001 | External errors не дают `failed` | Временная SQLite, AI fallback, email failed | Валидное обращение | Вызвать service | Итог `completed_with_errors`, не `failed` | Unit | `test_processing_failed_is_not_used_for_external_errors` | `tests/unit/test_contact_service.py` |
+| CONTACT-API-SUCCESS-001 | POST `/api/contact` успешно создаёт обращение | API, временная SQLite, fake services | Валидный JSON | POST | HTTP 201, запись сохранена, статусы `sent/completed` | Integration | `test_contact_api_success_creates_contact` | `tests/integration/test_contact_api.py` |
+| CONTACT-API-AI-FALLBACK-001 | API возвращает 201 при AI fallback | API, fake AI fallback | Валидный JSON | POST | `ai_processed=false`, `completed_with_errors` | Integration | `test_contact_api_ai_fallback_returns_created` | `tests/integration/test_contact_api.py` |
+| CONTACT-API-EMAIL-FAILED-001 | API возвращает 201 при email failed | API, fake owner email failed | Валидный JSON | POST | Email status отражён, техошибка не раскрыта | Integration | `test_contact_api_email_failure_returns_completed_with_errors` | `tests/integration/test_contact_api.py` |
+| CONTACT-API-VALIDATION-001 | Невалидные данные дают 422 | API | name/email/phone/comment/honeypot invalid | POST | Service не вызван, запись не создана | Integration | `test_contact_api_validation_errors_do_not_call_service` | `tests/integration/test_contact_api.py` |
+| CONTACT-API-DATABASE-FAILED-001 | Ошибка create даёт безопасный 500 | API, failing repository | Валидный JSON | POST | HTTP 500 без traceback, email не вызван | Integration | `test_contact_api_database_create_error_returns_safe_500` | `tests/integration/test_contact_api.py` |
+| CONTACT-API-REQUEST-ID-001 | Request ID совпадает в header и body | API, fake services | Валидный JSON с `X-Request-ID` | POST | Body и header содержат один request ID | Integration | `test_contact_api_success_creates_contact` | `tests/integration/test_contact_api.py` |
+| CONTACT-API-OPENAPI-001 | Endpoint зарегистрирован в OpenAPI | API | Нет | GET `/openapi.json` | `POST /api/contact` и 201 задокументированы | Integration | `test_contact_api_openapi_contains_contact_endpoint` | `tests/integration/test_contact_api.py` |
 
 ## Ручные сценарии
 
@@ -331,6 +360,8 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | AI-FALLBACK-TIMEOUT-001 | Fallback при timeout OpenAI | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FALLBACK-CONNECTION-001 | Fallback при ошибке соединения | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FALLBACK-AUTH-001 | Fallback при ошибке авторизации | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-PERMISSION-001 | Fallback при запрете доступа OpenAI/ProxyAPI | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FALLBACK-PERMISSION-002 | Детали запрета доступа безопасно сохраняются | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FALLBACK-RATE-LIMIT-001 | Fallback при rate limit | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FALLBACK-API-001 | Fallback при общей API-ошибке | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FALLBACK-INVALID-RESPONSE-001 | Fallback при невалидном structured output | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
@@ -341,7 +372,8 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | AI-FAKE-002 | Fake fallback возвращает fallback | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FAKE-003 | Fake error имитирует исключение | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FAKE-004 | Fake service не создаёт OpenAI-клиент | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
-| AI-LIVE-001 | Один контролируемый live-запрос OpenAI | Manual | Нет | CLI manual | [ ] |
+| AI-PROXY-001 | OpenAI SDK получает custom base_url | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-LIVE-001 | Один контролируемый live-запрос через ProxyAPI | Manual | Нет | CLI manual | [x] |
 | EMAIL-SCHEMA-001 | Валидное email-сообщение принимается | Unit | Да | `tests/unit/test_email_schemas.py` | [x] |
 | EMAIL-SCHEMA-002 | Невалидные поля письма отклоняются | Unit | Да | `tests/unit/test_email_schemas.py` | [x] |
 | EMAIL-SCHEMA-003 | Валидный результат отправки принимается | Unit | Да | `tests/unit/test_email_schemas.py` | [x] |
@@ -359,6 +391,7 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | EMAIL-SEND-RESULT-001 | Успешный ответ сохраняет provider message id | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-SKIPPED-DISABLED-001 | Live отключён возвращает skipped | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-FAILED-CONFIG-001 | Отсутствующие настройки возвращают failed | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-FAILED-CONFIG-002 | Sender с именем в `EMAIL_FROM_ADDRESS` отклоняется | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-FAILED-PROVIDER-001 | Ошибки Resend возвращают failed | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-FAILED-INVALID-RESPONSE-001 | Ответ без id считается ошибкой | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-LOGGING-001 | Тело письма и PII не попадают в логи | Unit | Да | `tests/unit/test_email_service.py` | [x] |
@@ -366,13 +399,31 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | EMAIL-FAKE-002 | Fake exception имитирует ошибку | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-FAKE-003 | Fake-сервис не вызывает Resend | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-LIVE-001 | Одно контролируемое live-письмо через Resend | Manual | Нет | CLI manual | [ ] |
+| PIPELINE-SUCCESS-001 | Полный pipeline успешно завершается | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-AI-FALLBACK-001 | AI fallback не останавливает pipeline | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-AI-EXCEPTION-001 | Исключение AI превращается в fallback | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-OWNER-EMAIL-FAILED-001 | Ошибка письма владельцу не отменяет письмо пользователю | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-USER-EMAIL-FAILED-001 | Ошибка письма пользователю не отменяет письмо владельцу | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-EMAILS-FAILED-001 | Оба письма failed не роняют pipeline | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-EMAIL-SKIPPED-001 | Skipped email считается частичной ошибкой | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-REPOSITORY-CREATE-FAILED-001 | Ошибка create останавливает внешние этапы | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-REPOSITORY-UPDATE-FAILED-001 | Ошибка сохранения AI критична | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-REPOSITORY-EMAIL-UPDATE-FAILED-001 | Ошибка сохранения email-статуса критична | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-STATUS-001 | External errors не дают `failed` | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| CONTACT-API-SUCCESS-001 | POST `/api/contact` успешно создаёт обращение | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
+| CONTACT-API-AI-FALLBACK-001 | API возвращает 201 при AI fallback | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
+| CONTACT-API-EMAIL-FAILED-001 | API возвращает 201 при email failed | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
+| CONTACT-API-VALIDATION-001 | Невалидные данные дают 422 | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
+| CONTACT-API-DATABASE-FAILED-001 | Ошибка create даёт безопасный 500 | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
+| CONTACT-API-REQUEST-ID-001 | Request ID совпадает в header и body | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
+| CONTACT-API-OPENAPI-001 | Endpoint зарегистрирован в OpenAPI | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
 
 ## Финальный checklist перед сдачей проекта
 
 - [ ] Все автоматические тесты пройдены.
 - [ ] Ручной health check выполнен.
 - [ ] Миграции применяются из чистого состояния.
-- [ ] OpenAI live-вызов выполнен только при явном разрешении.
+- [ ] AI live-вызов через ProxyAPI выполнен только при явном разрешении.
 - [ ] Реальное тестовое письмо отправлено только при явном разрешении.
 - [ ] Секреты отсутствуют в репозитории.
 - [ ] README финального этапа описывает запуск, API, деплой и ограничения.

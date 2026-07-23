@@ -45,6 +45,10 @@
 - Реальные запросы OpenAI и реальные письма запрещены по умолчанию.
 - Live-вызовы разрешены только отдельной командой с явным флагом.
 - Перед live-командой явно предупреждать о токенах или реальном письме.
+- AI live-запросы выполняются через ProxyAPI как OpenAI-совместимый шлюз.
+- Для AI live в `.env` используется ключ ProxyAPI в `OPENAI_API_KEY` и `OPENAI_BASE_URL=https://api.proxyapi.ru/openai/v1`.
+- Прямой OpenAI API локально не используется из-за регионального ограничения `unsupported_country_region_territory`.
+- Для Resend `EMAIL_FROM_ADDRESS` хранит только чистый email, а display name задаётся отдельно через `EMAIL_FROM_NAME`.
 
 ## Тестирование
 

@@ -38,6 +38,13 @@ def configure_logging(settings: Settings) -> None:
 
     root_logger = logging.getLogger()
     root_logger.setLevel(settings.log_level)
+    # В тестах pytest ставит свой LogCaptureHandler. Его нельзя удалять при
+    # повторном create_app(), иначе caplog перестаёт видеть события логирования.
+    preserved_handlers = [
+        handler
+        for handler in root_logger.handlers
+        if handler.__class__.__module__.startswith("_pytest.")
+    ]
     root_logger.handlers.clear()
 
     formatter = logging.Formatter(
@@ -62,6 +69,13 @@ def configure_logging(settings: Settings) -> None:
 
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
+    for handler in preserved_handlers:
+        root_logger.addHandler(handler)
+
+    http_logger = logging.getLogger("app.http")
+    http_logger.disabled = False
+    http_logger.propagate = True
+    http_logger.setLevel(settings.log_level)
 
 
 def get_request_id() -> str:

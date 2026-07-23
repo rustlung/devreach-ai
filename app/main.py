@@ -7,6 +7,7 @@ from app.api.exception_handlers import (
     unhandled_exception_handler,
     validation_exception_handler,
 )
+from app.api.routes.contact import router as contact_router
 from app.api.routes.health import router as health_router
 from app.core.config import Settings, get_settings
 from app.core.logging import RequestLoggingMiddleware, configure_logging
@@ -29,7 +30,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=active_settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "OPTIONS"],
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
     app.add_middleware(RequestLoggingMiddleware)
@@ -39,6 +40,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(health_router)
+    app.include_router(contact_router)
     return app
 
 

@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     log_max_bytes: int = Field(default=1_048_576, validation_alias="LOG_MAX_BYTES")
     log_backup_count: int = Field(default=3, validation_alias="LOG_BACKUP_COUNT")
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    openai_base_url: str | None = Field(default=None, validation_alias="OPENAI_BASE_URL")
     openai_model: str = Field(default="gpt-4.1-mini", validation_alias="OPENAI_MODEL")
     openai_timeout_seconds: float = Field(default=20.0, validation_alias="OPENAI_TIMEOUT_SECONDS")
     openai_max_retries: int = Field(default=1, validation_alias="OPENAI_MAX_RETRIES")
@@ -72,6 +73,14 @@ class Settings(BaseSettings):
     @field_validator("openai_api_key", mode="before")
     @classmethod
     def normalize_openai_api_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped_value = value.strip()
+        return stripped_value or None
+
+    @field_validator("openai_base_url", mode="before")
+    @classmethod
+    def normalize_openai_base_url(cls, value: str | None) -> str | None:
         if value is None:
             return None
         stripped_value = value.strip()

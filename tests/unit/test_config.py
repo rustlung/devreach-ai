@@ -18,6 +18,7 @@ def test_settings_are_loaded_from_environment(monkeypatch, tmp_path, _case_id) -
     monkeypatch.setenv("LOG_FILE_PATH", str(tmp_path / "env.log"))
     monkeypatch.setenv("LOG_MAX_BYTES", "2048")
     monkeypatch.setenv("LOG_BACKUP_COUNT", "2")
+    monkeypatch.setenv("OPENAI_BASE_URL", " https://api.proxyapi.ru/openai/v1 ")
 
     settings = Settings()
 
@@ -30,6 +31,7 @@ def test_settings_are_loaded_from_environment(monkeypatch, tmp_path, _case_id) -
     assert settings.log_level == "DEBUG"
     assert settings.log_max_bytes == 2048
     assert settings.log_backup_count == 2
+    assert settings.openai_base_url == "https://api.proxyapi.ru/openai/v1"
 
 
 @pytest.mark.parametrize(

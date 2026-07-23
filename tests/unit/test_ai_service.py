@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-from openai import APIConnectionError, APIError, APITimeoutError, AuthenticationError, RateLimitError
+from openai import APIConnectionError, APIError, APITimeoutError, AuthenticationError, PermissionDeniedError, RateLimitError
 
 from app.ai.prompts import AI_ANALYSIS_SYSTEM_PROMPT
 from app.core.config import Settings
@@ -66,6 +66,16 @@ def request() -> httpx.Request:
 
 def response(status_code: int) -> httpx.Response:
     return httpx.Response(status_code, request=request())
+
+
+def provider_error_body(**overrides) -> dict:
+    error = {
+        "message": "You do not have access to model gpt-4.1-mini with key sk-testsecret12345",
+        "type": "invalid_request_error",
+        "code": "model_not_found",
+    }
+    error.update(overrides)
+    return {"error": error}
 
 
 @readable_test_id("успешный openai вызов возвращает статус success")
@@ -145,6 +155,7 @@ def test_openai_service_returns_fallback_before_client_call(settings_overrides: 
         (APITimeoutError(request()), "api_timeout"),
         (APIConnectionError(request=request()), "api_connection_error"),
         (AuthenticationError("auth failed", response=response(401), body=None), "api_auth_error"),
+        (PermissionDeniedError("permission denied", response=response(403), body=None), "api_permission_denied"),
         (RateLimitError("rate limit", response=response(429), body=None), "api_rate_limit"),
         (APIError("api error", request=request(), body=None), "api_error"),
     ],
@@ -152,6 +163,7 @@ def test_openai_service_returns_fallback_before_client_call(settings_overrides: 
         "fallback при timeout openai",
         "fallback при ошибке соединения openai",
         "fallback при ошибке авторизации openai",
+        "fallback при запрете доступа openai",
         "fallback при rate limit openai",
         "fallback при общей ошибке api openai",
     ],
@@ -166,6 +178,28 @@ def test_openai_service_returns_fallback_for_provider_errors(exc: Exception, exp
     assert result.error_code == expected_code
     assert result.analysis.sentiment == "neutral"
     assert "OpenAI API timeout" not in result.analysis.suggested_reply
+
+
+@readable_test_id("permission denied содержит безопасные детали openai")
+def test_openai_service_includes_safe_provider_details_for_permission_denied(_case_id) -> None:
+    """AI-FALLBACK-PROVIDER-002: PermissionDeniedError сохраняет безопасные детали провайдера."""
+    exc = PermissionDeniedError(
+        "permission denied",
+        response=response(403),
+        body=provider_error_body(),
+    )
+    service = OpenAIAnalysisService(settings=make_settings(), client=make_client(FakeCompletions(exc=exc)))
+
+    result = service.analyze_comment(TEST_COMMENT)
+
+    assert result.status == AiStatus.FALLBACK
+    assert result.error_code == "api_permission_denied"
+    assert result.error_message is not None
+    assert "status=403" in result.error_message
+    assert "code=model_not_found" in result.error_message
+    assert "type=invalid_request_error" in result.error_message
+    assert "[redacted]" in result.error_message
+    assert "sk-testsecret12345" not in result.error_message
 
 
 @pytest.mark.parametrize(
@@ -251,3 +285,24 @@ def test_fake_service_does_not_create_openai_client(monkeypatch, _case_id) -> No
     result = FakeAIAnalysisService().analyze_comment(TEST_COMMENT)
 
     assert result.status == AiStatus.SUCCESS
+
+
+@readable_test_id("openai клиент получает proxyapi base url")
+def test_openai_client_is_created_with_custom_base_url(monkeypatch, _case_id) -> None:
+    """AI-PROXY-001: OpenAI SDK получает base_url для OpenAI-совместимого провайдера."""
+    captured_kwargs = {}
+
+    def fake_openai(**kwargs):
+        captured_kwargs.update(kwargs)
+        return make_client(FakeCompletions(parsed=valid_analysis()))
+
+    monkeypatch.setattr(ai_service_module, "OpenAI", fake_openai)
+    service = OpenAIAnalysisService(
+        settings=make_settings(OPENAI_BASE_URL="https://api.proxyapi.ru/openai/v1"),
+    )
+
+    result = service.analyze_comment(TEST_COMMENT)
+
+    assert result.status == AiStatus.SUCCESS
+    assert captured_kwargs["base_url"] == "https://api.proxyapi.ru/openai/v1"
+    assert captured_kwargs["api_key"] == "test-key"

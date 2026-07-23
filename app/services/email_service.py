@@ -8,6 +8,7 @@ from typing import Any, Protocol
 import requests
 import resend
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from pydantic import EmailStr, TypeAdapter, ValidationError
 from resend import exceptions as resend_exceptions
 
 from app.core.config import Settings, get_settings
@@ -16,6 +17,7 @@ from app.schemas.email import EmailMessage, EmailSendResult, EmailTemplateContex
 
 
 logger = logging.getLogger(__name__)
+_EMAIL_ADDRESS_ADAPTER = TypeAdapter(EmailStr)
 
 SAFE_USER_REPLY_FALLBACK = (
     "Спасибо за обращение. Сообщение получено, я ознакомлюсь с ним и свяжусь с вами "
@@ -110,6 +112,13 @@ class ResendEmailService:
             return self._failed(email_type, contact_id, "missing_api_key", "RESEND_API_KEY не задан")
         if not self.settings.email_from_address:
             return self._failed(email_type, contact_id, "missing_sender", "EMAIL_FROM_ADDRESS не задан")
+        if not self._is_valid_sender_address(self.settings.email_from_address):
+            return self._failed(
+                email_type,
+                contact_id,
+                "invalid_sender",
+                "EMAIL_FROM_ADDRESS должен содержать только email без имени отправителя",
+            )
 
         payload = self._build_payload(message)
         try:
@@ -204,6 +213,17 @@ class ResendEmailService:
             return f"{self.settings.email_from_name} <{self.settings.email_from_address}>"
         return self.settings.email_from_address or ""
 
+    def _is_valid_sender_address(self, value: str) -> bool:
+        if "<" in value or ">" in value:
+            return False
+        try:
+            # Resend принимает friendly sender в поле `from`, но в настройках мы
+            # храним имя и адрес отдельно, чтобы не получить вложенный формат.
+            _EMAIL_ADDRESS_ADAPTER.validate_python(value)
+        except ValidationError:
+            return False
+        return True
+
     def _format_created_at(self, context: EmailTemplateContext) -> str | None:
         if context.created_at is None:
             return None
@@ -244,6 +264,7 @@ class ResendEmailService:
             "provider_timeout": "Resend не ответил за ожидаемое время",
             "provider_connection_error": "Ошибка соединения с Resend",
             "provider_error": "Resend вернул ошибку API",
+            "invalid_sender": "EMAIL_FROM_ADDRESS должен содержать только email без имени отправителя",
             "unexpected_error": "Неожиданная ошибка email-сервиса",
         }
         return messages.get(error_code, "Ошибка email-сервиса")
@@ -272,12 +293,23 @@ class ResendEmailService:
 
 
 class FakeEmailService:
-    def __init__(self, mode: str = "success") -> None:
+    def __init__(self, mode: str = "success", owner_mode: str | None = None, user_mode: str | None = None) -> None:
         self.mode = mode
+        self.owner_mode = owner_mode
+        self.user_mode = user_mode
         self.sent_messages: list[dict[str, Any]] = []
 
     def send(self, message: EmailMessage, email_type: EmailType, contact_id: int | None = None) -> EmailSendResult:
-        if self.mode == "error":
+        return self._send_with_mode(self.mode, message, email_type, contact_id)
+
+    def _send_with_mode(
+        self,
+        mode: str,
+        message: EmailMessage,
+        email_type: EmailType,
+        contact_id: int | None,
+    ) -> EmailSendResult:
+        if mode == "error":
             raise RuntimeError("Тестовая ошибка fake email")
 
         self.sent_messages.append(
@@ -288,14 +320,14 @@ class FakeEmailService:
             }
         )
 
-        if self.mode == "failed":
+        if mode == "failed":
             return EmailSendResult(
                 status=EmailStatus.FAILED,
                 provider="fake",
                 error_code="fake_failed",
                 error_message="Fake email failure",
             )
-        if self.mode == "skipped":
+        if mode == "skipped":
             return EmailSendResult(
                 status=EmailStatus.SKIPPED,
                 provider="fake",
@@ -303,3 +335,22 @@ class FakeEmailService:
                 error_message="Fake email skipped",
             )
         return EmailSendResult(status=EmailStatus.SENT, provider="fake", message_id=f"fake-{len(self.sent_messages)}")
+
+    def send_owner_notification(self, context: EmailTemplateContext) -> EmailSendResult:
+        message = EmailMessage(
+            to="owner@example.com",
+            subject="Fake owner notification",
+            html="<p>Fake owner notification</p>",
+            text="Fake owner notification",
+            reply_to=context.email,
+        )
+        return self._send_with_mode(self.owner_mode or self.mode, message, EmailType.OWNER_NOTIFICATION, context.contact_id)
+
+    def send_user_confirmation(self, context: EmailTemplateContext) -> EmailSendResult:
+        message = EmailMessage(
+            to=context.email,
+            subject="Fake user confirmation",
+            html="<p>Fake user confirmation</p>",
+            text="Fake user confirmation",
+        )
+        return self._send_with_mode(self.user_mode or self.mode, message, EmailType.USER_CONFIRMATION, context.contact_id)

@@ -20,6 +20,7 @@ from app.db.session import check_database_connection
 from app.repositories.contact_repository import ContactRepository
 from app.schemas.email import EmailMessage, EmailTemplateContext, EmailType
 from app.services.ai_service import FakeAIAnalysisService, OpenAIAnalysisService
+from app.services.contact_service import ContactService
 from app.services.email_service import FakeEmailService, ResendEmailService
 from app.schemas.contact import ContactRequestCreate
 from app.schemas.contact_storage import AiStatus, ContactAiUpdate, ContactCategory, ContactPriority, EmailStatus, ProcessingStatus, Sentiment
@@ -230,6 +231,7 @@ def analyze_comment(live: bool = False) -> int:
         return 0
 
     print("Режим AI: live")
+    print(f"Маршрут AI: {_get_ai_route_label(settings)}")
     if not settings.ai_live_requests_enabled:
         print("Live-запрос OpenAI не выполнен: AI_LIVE_REQUESTS_ENABLED=false")
         result = OpenAIAnalysisService(settings).analyze_comment(comment)
@@ -249,6 +251,14 @@ def analyze_comment(live: bool = False) -> int:
     else:
         print("\nИтог: OpenAI недоступен или вернул ошибку, применён fallback")
     return 0
+
+
+def _get_ai_route_label(settings: Settings) -> str:
+    if not settings.openai_base_url:
+        return "прямой OpenAI API"
+    if "proxyapi" in settings.openai_base_url.lower():
+        return "ProxyAPI через OpenAI SDK"
+    return "OpenAI-compatible base_url"
 
 
 def _email_preview_settings(**overrides) -> Settings:
@@ -372,6 +382,81 @@ def check_email(live: bool = False, recipient: str | None = None) -> int:
     return 0 if result.status == EmailStatus.SKIPPED else 1
 
 
+def run_contact_pipeline(ai_fallback: bool = False, email_failure: str | None = None) -> int:
+    temp_dir = tempfile.TemporaryDirectory()
+    database_path = Path(temp_dir.name) / "contact-pipeline.sqlite3"
+    engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False}, future=True)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    session = None
+
+    try:
+        Base.metadata.create_all(engine)
+        print("Создание временной базы: успешно")
+
+        contact_data = ContactRequestCreate(**_base_contact_payload())
+        print("Валидация обращения: успешно")
+
+        session = session_factory()
+        repository = ContactRepository(session)
+        ai_service = FakeAIAnalysisService(mode="fallback" if ai_fallback else "success")
+        email_service = FakeEmailService(
+            owner_mode="failed" if email_failure in {"owner", "both"} else None,
+            user_mode="failed" if email_failure in {"user", "both"} else None,
+        )
+        service = ContactService(repository=repository, ai_service=ai_service, email_service=email_service)
+
+        response = service.process_contact(contact_data, request_id="cli-contact-pipeline")
+        contact = repository.get_by_id(response.id)
+        if contact is None:
+            raise AssertionError("Созданное обращение не найдено в базе")
+
+        print(f"Сохранение обращения: успешно, ID={response.id}")
+        print("AI-анализ в fake-режиме: успешно")
+        if not contact.ai_status:
+            raise AssertionError("AI-статус не сохранён")
+        print("Сохранение AI-результата: успешно")
+
+        if len(email_service.sent_messages) != 2:
+            raise AssertionError("Fake email service должен получить два письма")
+        print("Fake-письмо владельцу: успешно")
+        print("Fake-письмо пользователю: успешно")
+
+        expected_owner_status = EmailStatus.FAILED.value if email_failure in {"owner", "both"} else EmailStatus.SENT.value
+        expected_user_status = EmailStatus.FAILED.value if email_failure in {"user", "both"} else EmailStatus.SENT.value
+        if contact.owner_email_status != expected_owner_status or contact.user_email_status != expected_user_status:
+            raise AssertionError("Email-статусы не совпали с ожидаемыми")
+        print("Сохранение email-статусов: успешно")
+
+        expected_processing = (
+            ProcessingStatus.COMPLETED_WITH_ERRORS.value
+            if ai_fallback or email_failure
+            else ProcessingStatus.COMPLETED.value
+        )
+        if contact.processing_status != expected_processing:
+            raise AssertionError("Итоговый статус обработки не совпал с ожидаемым")
+        print(f"Итоговый статус {expected_processing}: успешно")
+
+    except Exception as exc:
+        logging.getLogger("app.cli").exception("CLI-проверка contact pipeline завершилась ошибкой")
+        print(f"Итог: contact pipeline завершился ошибкой на этапе: {type(exc).__name__}")
+        print(f"Причина: {exc}")
+        return 1
+    finally:
+        if session is not None:
+            session.close()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+        temp_dir.cleanup()
+        print("Удаление временной базы: успешно")
+
+    print("\nOpenAI: не вызывался")
+    print("Resend: не вызывался")
+    print("Расход токенов: отсутствует")
+    print("Реальные письма: не отправлялись")
+    print("\nИтог: полный contact pipeline работает корректно")
+    return 0
+
+
 def _print_ai_result(result) -> None:
     print(f"Тональность: {result.analysis.sentiment.value}")
     print(f"Категория: {result.analysis.category.value}")
@@ -380,6 +465,11 @@ def _print_ai_result(result) -> None:
     print("Черновик ответа: получен")
     if result.error_code:
         print(f"Внутренний код fallback: {result.error_code}")
+    if result.error_message:
+        print(f"Причина fallback: {result.error_message}")
+    if result.error_code == "api_permission_denied":
+        print("Подсказка: OpenAI принял ключ, но запретил выбранную модель или операцию.")
+        print("Проверьте OPENAI_MODEL и доступ проекта/ключа к этой модели.")
 
 
 def _assert_equal(actual, expected) -> None:
@@ -401,6 +491,13 @@ def main(argv: list[str] | None = None) -> int:
     email_parser = subparsers.add_parser("check-email", help="Проверить email-сервис")
     email_parser.add_argument("--live", action="store_true", help="Отправить одно тестовое письмо через Resend")
     email_parser.add_argument("--recipient", help="Явный получатель live-проверки email")
+    pipeline_parser = subparsers.add_parser("run-contact-pipeline", help="Проверить полный fake contact pipeline")
+    pipeline_parser.add_argument("--ai-fallback", action="store_true", help="Имитировать AI fallback")
+    pipeline_parser.add_argument(
+        "--email-failure",
+        choices=["owner", "user", "both"],
+        help="Имитировать ошибку email-отправки в простой fake-проверке",
+    )
     analyze_parser = subparsers.add_parser("analyze-comment", help="Проверить AI-анализ комментария")
     analyze_parser.add_argument("--live", action="store_true", help="Выполнить один live-запрос OpenAI при явных настройках")
 
@@ -415,6 +512,8 @@ def main(argv: list[str] | None = None) -> int:
         return render_emails()
     if args.command == "check-email":
         return check_email(live=args.live, recipient=args.recipient)
+    if args.command == "run-contact-pipeline":
+        return run_contact_pipeline(ai_fallback=args.ai_fallback, email_failure=args.email_failure)
     if args.command == "analyze-comment":
         return analyze_comment(live=args.live)
     return 1

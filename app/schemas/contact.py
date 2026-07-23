@@ -1,7 +1,8 @@
 from typing import Annotated
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from app.schemas.contact_storage import AiStatus, EmailStatus, ProcessingStatus
 from app.schemas.normalizers import (
     normalize_email,
     normalize_multiline_text,
@@ -127,3 +128,22 @@ class ContactRequestCreate(BaseModel):
         if self.website:
             raise ValueError("Служебное поле должно оставаться пустым")
         return self
+
+
+class ContactEmailStatuses(BaseModel):
+    owner: EmailStatus
+    user: EmailStatus
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ContactResponse(BaseModel):
+    id: int
+    status: ProcessingStatus
+    message: str
+    ai_processed: bool
+    ai_status: AiStatus
+    emails: ContactEmailStatuses
+    request_id: str
+
+    model_config = ConfigDict(extra="forbid")

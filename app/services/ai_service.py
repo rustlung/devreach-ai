@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Protocol
 
@@ -11,6 +12,7 @@ from openai import (
     AuthenticationError,
     OpenAI,
     OpenAIError,
+    PermissionDeniedError,
     RateLimitError,
 )
 from pydantic import ValidationError
@@ -21,6 +23,12 @@ from app.schemas.ai import AIAnalysisResult, AIServiceResult
 from app.schemas.contact_storage import AiStatus, ContactCategory, ContactPriority, Sentiment
 
 logger = logging.getLogger(__name__)
+
+_SECRET_PATTERNS = (
+    re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
+    re.compile(r"Bearer\s+[A-Za-z0-9._-]+", re.IGNORECASE),
+)
+_MAX_PROVIDER_DETAIL_LENGTH = 500
 
 
 class AIAnalysisService(Protocol):
@@ -49,6 +57,38 @@ def build_fallback_result(error_code: str, error_message: str | None = None) -> 
     )
 
 
+def _redact_provider_text(value: str) -> str:
+    redacted_value = value
+    for pattern in _SECRET_PATTERNS:
+        redacted_value = pattern.sub("[redacted]", redacted_value)
+    return redacted_value[:_MAX_PROVIDER_DETAIL_LENGTH]
+
+
+def _extract_openai_error_details(exc: OpenAIError) -> str | None:
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
+    body = getattr(exc, "body", None)
+    error_body = body.get("error", body) if isinstance(body, dict) else {}
+
+    provider_code = error_body.get("code") or getattr(exc, "code", None)
+    provider_type = error_body.get("type") or getattr(exc, "type", None)
+    provider_message = error_body.get("message") or str(exc)
+
+    details = []
+    if status_code:
+        details.append(f"status={status_code}")
+    if provider_code:
+        details.append(f"code={provider_code}")
+    if provider_type:
+        details.append(f"type={provider_type}")
+    if provider_message:
+        # Сообщение провайдера помогает отличить модель, проект, квоту и endpoint,
+        # но перед выводом мы на всякий случай вырезаем похожие на секреты фрагменты.
+        details.append(f"message={_redact_provider_text(str(provider_message))}")
+
+    return "; ".join(details) or None
+
+
 class OpenAIAnalysisService:
     def __init__(self, settings: Settings | None = None, client: OpenAI | None = None) -> None:
         self.settings = settings or get_settings()
@@ -57,8 +97,9 @@ class OpenAIAnalysisService:
     def analyze_comment(self, comment: str) -> AIServiceResult:
         start_time = time.perf_counter()
         logger.info(
-            "event=ai_analysis_started provider=openai model=%s comment_length=%s",
+            "event=ai_analysis_started provider=openai model=%s custom_base_url=%s comment_length=%s",
             self.settings.openai_model,
+            bool(self.settings.openai_base_url),
             len(comment),
         )
 
@@ -92,6 +133,12 @@ class OpenAIAnalysisService:
             return self._fallback("api_connection_error", "Ошибка соединения с OpenAI", exc)
         except AuthenticationError as exc:
             return self._fallback("api_auth_error", "Ошибка авторизации OpenAI", exc)
+        except PermissionDeniedError as exc:
+            return self._fallback(
+                "api_permission_denied",
+                "У проекта OpenAI нет доступа к выбранной модели или операции",
+                exc,
+            )
         except RateLimitError as exc:
             return self._fallback("api_rate_limit", "OpenAI rate limit", exc)
         except APIError as exc:
@@ -126,10 +173,17 @@ class OpenAIAnalysisService:
         if self._client is None:
             # Клиент создаётся лениво: импорт приложения и обычные тесты не должны
             # требовать API-ключ и не должны случайно готовить live-запрос.
+            client_kwargs = {
+                "api_key": self.settings.openai_api_key,
+                "timeout": self.settings.openai_timeout_seconds,
+                "max_retries": self.settings.openai_max_retries,
+            }
+            if self.settings.openai_base_url:
+                # ProxyAPI и другие совместимые шлюзы подключаются заменой base_url,
+                # без переписывания бизнес-логики AI-сервиса.
+                client_kwargs["base_url"] = self.settings.openai_base_url
             self._client = OpenAI(
-                api_key=self.settings.openai_api_key,
-                timeout=self.settings.openai_timeout_seconds,
-                max_retries=self.settings.openai_max_retries,
+                **client_kwargs,
             )
         return self._client
 
@@ -139,12 +193,19 @@ class OpenAIAnalysisService:
         error_message: str,
         exc: Exception | None = None,
     ) -> AIServiceResult:
+        provider_details = _extract_openai_error_details(exc) if isinstance(exc, OpenAIError) else None
+        safe_error_message = (
+            f"{error_message}. Детали OpenAI: {provider_details}"
+            if provider_details
+            else error_message
+        )
         logger.warning(
-            "event=ai_fallback_applied reason=%s error_type=%s fallback_applied=true",
+            "event=ai_fallback_applied reason=%s error_type=%s provider_details=%s fallback_applied=true",
             error_code,
             type(exc).__name__ if exc else None,
+            provider_details,
         )
-        return build_fallback_result(error_code=error_code, error_message=error_message)
+        return build_fallback_result(error_code=error_code, error_message=safe_error_message)
 
 
 class FakeAIAnalysisService:

@@ -151,11 +151,13 @@ def test_disabled_live_requests_return_skipped(_case_id) -> None:
     [
         ({"RESEND_API_KEY": ""}, "missing_api_key"),
         ({"EMAIL_FROM_ADDRESS": ""}, "missing_sender"),
+        ({"EMAIL_FROM_ADDRESS": "Legal Client Tracker <onboarding@resend.dev>"}, "invalid_sender"),
         ({"OWNER_EMAIL": ""}, "missing_owner_email"),
     ],
     ids=[
         "отсутствующий resend api key обрабатывается",
         "отсутствующий sender обрабатывается",
+        "sender с именем вместо чистого email отклоняется",
         "отсутствующий owner email обрабатывается",
     ],
 )
@@ -177,6 +179,8 @@ def test_missing_email_settings_are_handled(settings_overrides: dict, expected_c
 
     assert result.status == EmailStatus.FAILED
     assert result.error_code == expected_code
+    if expected_code == "invalid_sender":
+        assert FakeResendEmails.payload is None
 
 
 @pytest.mark.parametrize(
