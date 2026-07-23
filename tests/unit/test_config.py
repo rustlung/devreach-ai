@@ -19,6 +19,9 @@ def test_settings_are_loaded_from_environment(monkeypatch, tmp_path, _case_id) -
     monkeypatch.setenv("LOG_MAX_BYTES", "2048")
     monkeypatch.setenv("LOG_BACKUP_COUNT", "2")
     monkeypatch.setenv("OPENAI_BASE_URL", " https://api.proxyapi.ru/openai/v1 ")
+    monkeypatch.setenv("CONTACT_RATE_LIMIT_REQUESTS", "5")
+    monkeypatch.setenv("CONTACT_RATE_LIMIT_WINDOW_SECONDS", "120")
+    monkeypatch.setenv("TRUST_PROXY_HEADERS", "false")
 
     settings = Settings()
 
@@ -32,6 +35,9 @@ def test_settings_are_loaded_from_environment(monkeypatch, tmp_path, _case_id) -
     assert settings.log_max_bytes == 2048
     assert settings.log_backup_count == 2
     assert settings.openai_base_url == "https://api.proxyapi.ru/openai/v1"
+    assert settings.contact_rate_limit_requests == 5
+    assert settings.contact_rate_limit_window_seconds == 120
+    assert settings.trust_proxy_headers is False
 
 
 @pytest.mark.parametrize(
@@ -56,3 +62,26 @@ def test_debug_value_is_parsed(monkeypatch, raw_value: str, expected_value: bool
     settings = Settings()
 
     assert settings.debug is expected_value
+
+
+@pytest.mark.parametrize(
+    ("env_name", "env_value"),
+    [
+        ("CONTACT_RATE_LIMIT_REQUESTS", "0"),
+        ("CONTACT_RATE_LIMIT_WINDOW_SECONDS", "0"),
+        ("CONTACT_RATE_LIMIT_REQUESTS", "-1"),
+        ("CONTACT_RATE_LIMIT_WINDOW_SECONDS", "-1"),
+    ],
+    ids=[
+        "нулевой лимит обращений отклоняется",
+        "нулевое окно rate limit отклоняется",
+        "отрицательный лимит обращений отклоняется",
+        "отрицательное окно rate limit отклоняется",
+    ],
+)
+def test_invalid_rate_limit_settings_are_rejected(monkeypatch, env_name: str, env_value: str) -> None:
+    """CONFIG-RATE-LIMIT-001: некорректные настройки rate limiting отклоняются при загрузке."""
+    monkeypatch.setenv(env_name, env_value)
+
+    with pytest.raises(ValueError, match="больше нуля"):
+        Settings()

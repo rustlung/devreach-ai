@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     openai_timeout_seconds: float = Field(default=20.0, validation_alias="OPENAI_TIMEOUT_SECONDS")
     openai_max_retries: int = Field(default=1, validation_alias="OPENAI_MAX_RETRIES")
     ai_live_requests_enabled: bool = Field(default=False, validation_alias="AI_LIVE_REQUESTS_ENABLED")
+    contact_rate_limit_requests: int = Field(default=3, validation_alias="CONTACT_RATE_LIMIT_REQUESTS")
+    contact_rate_limit_window_seconds: int = Field(default=600, validation_alias="CONTACT_RATE_LIMIT_WINDOW_SECONDS")
+    trust_proxy_headers: bool = Field(default=True, validation_alias="TRUST_PROXY_HEADERS")
     resend_api_key: str | None = Field(default=None, validation_alias="RESEND_API_KEY")
     email_from_address: str | None = Field(default=None, validation_alias="EMAIL_FROM_ADDRESS")
     email_from_name: str = Field(default="DevReach AI", validation_alias="EMAIL_FROM_NAME")
@@ -69,6 +72,13 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_log_level(cls, value: str) -> str:
         return value.upper()
+
+    @field_validator("contact_rate_limit_requests", "contact_rate_limit_window_seconds")
+    @classmethod
+    def validate_positive_rate_limit_settings(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("Настройка rate limiting должна быть больше нуля")
+        return value
 
     @field_validator("openai_api_key", mode="before")
     @classmethod

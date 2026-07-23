@@ -250,6 +250,40 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | CONTACT-API-REQUEST-ID-001 | Request ID совпадает в header и body | API, fake services | Валидный JSON с `X-Request-ID` | POST | Body и header содержат один request ID | Integration | `test_contact_api_success_creates_contact` | `tests/integration/test_contact_api.py` |
 | CONTACT-API-OPENAPI-001 | Endpoint зарегистрирован в OpenAPI | API | Нет | GET `/openapi.json` | `POST /api/contact` и 201 задокументированы | Integration | `test_contact_api_openapi_contains_contact_endpoint` | `tests/integration/test_contact_api.py` |
 
+## Автоматические сценарии этапа 7
+
+Все проверки этапа 7 выполняются без реальных ProxyAPI и Resend. Unit-тесты используют управляемые часы без `sleep`, integration-тесты используют временную SQLite и fake AI/email.
+
+| ID | Описание | Предусловия | Входные данные | Шаги | Ожидаемый результат | Тип теста | Тестовая функция | Файл теста |
+| -- | -------- | ----------- | -------------- | ---- | ------------------- | -------- | ---------------- | ---------- |
+| RATE-LIMIT-UNIT-001 | Первые запросы разрешены | In-memory limiter | 3 запроса одного client key | Вызвать `check()` | Все разрешены, remaining корректен | Unit | `test_first_requests_are_allowed` | `tests/unit/test_rate_limiter.py` |
+| RATE-LIMIT-UNIT-002 | Запрос сверх лимита отклоняется | In-memory limiter | 3-й запрос при лимите 2 | Вызвать `check()` | `allowed=false`, retry_after есть | Unit | `test_request_over_limit_is_rejected` | `tests/unit/test_rate_limiter.py` |
+| RATE-LIMIT-WINDOW-001 | После окончания окна запрос снова разрешён | Управляемые часы | Перемотка на 61 секунду | Вызвать `check()` | Новый запрос разрешён | Unit | `test_request_is_allowed_after_window_expires` | `tests/unit/test_rate_limiter.py` |
+| RATE-LIMIT-CLEANUP-001 | Старые записи удаляются лениво | Управляемые часы | Истёкший client key | Вызвать `check()` для нового клиента | Старый ключ удалён | Unit | `test_old_records_are_cleaned_lazily` | `tests/unit/test_rate_limiter.py` |
+| RATE-LIMIT-INDEPENDENT-IP-001 | Разные client key независимы | In-memory limiter | `client-a`, `client-b` | Исчерпать первый лимит | Второй клиент разрешён | Unit | `test_different_clients_have_independent_limits` | `tests/unit/test_rate_limiter.py` |
+| RATE-LIMIT-UNKNOWN-001 | Unknown client key обрабатывается предсказуемо | In-memory limiter | `ip_sha256:unknown` | Два запроса при лимите 1 | Первый разрешён, второй отклонён | Unit | `test_unknown_client_key_is_handled_predictably` | `tests/unit/test_rate_limiter.py` |
+| RATE-LIMIT-RETRY-AFTER-001 | Retry-After рассчитывается корректно | Управляемые часы | Запросы на 0 и 10 секунде | Превысить лимит на 15 секунде | `retry_after=45` | Unit | `test_retry_after_is_calculated_from_oldest_active_hit` | `tests/unit/test_rate_limiter.py` |
+| RATE-LIMIT-CLEANUP-002 | Очистка не ломает активные записи | Управляемые часы | Старый и активный timestamps | Выполнить очистку | Активный timestamp остаётся | Unit | `test_cleanup_keeps_active_records` | `tests/unit/test_rate_limiter.py` |
+| RATE-LIMIT-CONCURRENCY-001 | Параллельная безопасность | ThreadPoolExecutor | 20 параллельных проверок | Вызвать `check()` | Разрешено ровно 5 при лимите 5 | Unit | `test_parallel_checks_do_not_exceed_limit` | `tests/unit/test_rate_limiter.py` |
+| RATE-LIMIT-CONFIG-001 | Некорректная конфигурация отклоняется | Нет | Ноль/отрицательные значения | Создать limiter | `ValueError` | Unit | `test_invalid_limiter_configuration_is_rejected` | `tests/unit/test_rate_limiter.py` |
+| RATE-LIMIT-IP-DIRECT-001 | IP берётся из `request.client.host` | Нет trusted header | IPv4 host | Вызвать `resolve_client_ip()` | Возвращён host | Unit | `test_client_ip_uses_request_client_host` | `tests/unit/test_client_ip.py` |
+| RATE-LIMIT-IP-PROXY-001 | Trusted `X-Forwarded-For` используется | `TRUST_PROXY_HEADERS=true` | Proxy header | Вызвать `resolve_client_ip()` | Возвращён header IP | Unit | `test_client_ip_uses_x_forwarded_for_when_trusted` | `tests/unit/test_client_ip.py` |
+| RATE-LIMIT-IP-PROXY-002 | Первый валидный адрес из цепочки | `TRUST_PROXY_HEADERS=true` | `bad, ip, proxy` | Вызвать `resolve_client_ip()` | Возвращён первый валидный IP | Unit | `test_client_ip_uses_first_valid_forwarded_address` | `tests/unit/test_client_ip.py` |
+| RATE-LIMIT-IP-UNTRUSTED-001 | Header игнорируется без доверия | `TRUST_PROXY_HEADERS=false` | Header и direct host | Вызвать `resolve_client_ip()` | Возвращён direct host | Unit | `test_client_ip_ignores_forwarded_header_when_untrusted` | `tests/unit/test_client_ip.py` |
+| RATE-LIMIT-IP-FALLBACK-001 | Некорректный header даёт fallback host | Некорректный header | `not-an-ip` | Вызвать `resolve_client_ip()` | Возвращён direct host | Unit | `test_invalid_forwarded_header_falls_back_to_request_client` | `tests/unit/test_client_ip.py` |
+| RATE-LIMIT-IP-FALLBACK-002 | Отсутствующий client даёт unknown | Нет client | Нет host | Вызвать `resolve_client_ip()` | Возвращён `unknown-client` | Unit | `test_missing_client_host_returns_unknown` | `tests/unit/test_client_ip.py` |
+| RATE-LIMIT-IP-V4-001 | IPv4 поддерживается | Нет | IPv4 | Вызвать `resolve_client_ip()` | IPv4 принят | Unit | `test_ipv4_address_is_supported` | `tests/unit/test_client_ip.py` |
+| RATE-LIMIT-IP-V6-001 | IPv6 поддерживается | Нет | IPv6 | Вызвать `resolve_client_ip()` | IPv6 принят | Unit | `test_ipv6_address_is_supported` | `tests/unit/test_client_ip.py` |
+| RATE-LIMIT-CLIENT-KEY-001 | Client key стабилен и маскирует IP | Нет | IP address | Вызвать `build_client_key()` | Hash стабилен, полный IP отсутствует | Unit | `test_client_key_is_stable_and_masks_ip` | `tests/unit/test_client_ip.py` |
+| RATE-LIMIT-API-ALLOWED-001 | Запросы в пределах лимита создают обращения | API, временная SQLite, fake services | 2 валидных POST | POST `/api/contact` | HTTP 201, 2 записи, pipeline вызван 2 раза | Integration | `test_contact_requests_within_limit_are_created` | `tests/integration/test_contact_rate_limit.py` |
+| RATE-LIMIT-API-EXCEEDED-001 | Превышение лимита даёт 429 | API, лимит 2 | 3 валидных POST | POST `/api/contact` | HTTP 429, безопасный body, `Retry-After` | Integration | `test_contact_request_over_limit_returns_429_without_pipeline` | `tests/integration/test_contact_rate_limit.py` |
+| RATE-LIMIT-NO-PIPELINE-001 | 429 не вызывает pipeline | API, fake services | Запрос сверх лимита | POST `/api/contact` | Нет новой записи, AI/email не вызваны | Integration | `test_contact_request_over_limit_returns_429_without_pipeline` | `tests/integration/test_contact_rate_limit.py` |
+| RATE-LIMIT-LOGGING-001 | Превышение лимита логируется без полного IP | API, caplog | Запрос сверх лимита | Проверить логи | Есть `client_key=ip_sha256`, полного IP нет | Integration | `test_contact_request_over_limit_returns_429_without_pipeline` | `tests/integration/test_contact_rate_limit.py` |
+| RATE-LIMIT-API-INDEPENDENT-IP-001 | Разные IP независимы в API | Trusted proxy headers | Два IP | POST `/api/contact` | Заблокированный IP не блокирует второй | Integration | `test_different_ips_have_independent_contact_limits` | `tests/integration/test_contact_rate_limit.py` |
+| RATE-LIMIT-API-WINDOW-001 | Истечение окна разрешает новый API-запрос | Управляемые часы | Перемотка на 61 секунду | POST `/api/contact` | Новый запрос создаёт запись | Integration | `test_contact_request_is_allowed_after_rate_limit_window` | `tests/integration/test_contact_rate_limit.py` |
+| RATE-LIMIT-API-INVALID-001 | Невалидный запрос учитывается в лимите | API, лимит 1 | Невалидный POST, затем валидный | POST `/api/contact` | Первый 422, второй 429, pipeline не вызван | Integration | `test_invalid_contact_request_counts_toward_rate_limit` | `tests/integration/test_contact_rate_limit.py` |
+| HONEYPOT-API-001 | Honeypot не создаёт запись и логируется | API, fake services | `website=bot` | POST `/api/contact` | HTTP 422, записи нет, pipeline не вызван, событие в логах | Integration | `test_honeypot_request_does_not_create_contact_and_is_logged` | `tests/integration/test_contact_rate_limit.py` |
+
 ## Ручные сценарии
 
 - Выполнить `alembic upgrade head` из корня проекта.
@@ -417,6 +451,33 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | CONTACT-API-DATABASE-FAILED-001 | Ошибка create даёт безопасный 500 | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
 | CONTACT-API-REQUEST-ID-001 | Request ID совпадает в header и body | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
 | CONTACT-API-OPENAPI-001 | Endpoint зарегистрирован в OpenAPI | Integration | Да | `tests/integration/test_contact_api.py` | [x] |
+| RATE-LIMIT-UNIT-001 | Первые запросы в пределах лимита разрешены | Unit | Да | `tests/unit/test_rate_limiter.py` | [x] |
+| RATE-LIMIT-UNIT-002 | Запрос сверх лимита отклоняется | Unit | Да | `tests/unit/test_rate_limiter.py` | [x] |
+| RATE-LIMIT-WINDOW-001 | После окончания окна запрос снова разрешён | Unit | Да | `tests/unit/test_rate_limiter.py` | [x] |
+| RATE-LIMIT-CLEANUP-001 | Старые записи удаляются лениво | Unit | Да | `tests/unit/test_rate_limiter.py` | [x] |
+| RATE-LIMIT-INDEPENDENT-IP-001 | Разные client key независимы | Unit | Да | `tests/unit/test_rate_limiter.py` | [x] |
+| RATE-LIMIT-UNKNOWN-001 | Unknown client key получает обычный лимит | Unit | Да | `tests/unit/test_rate_limiter.py` | [x] |
+| RATE-LIMIT-RETRY-AFTER-001 | Retry-After рассчитывается корректно | Unit | Да | `tests/unit/test_rate_limiter.py` | [x] |
+| RATE-LIMIT-CLEANUP-002 | Очистка не ломает активные записи | Unit | Да | `tests/unit/test_rate_limiter.py` | [x] |
+| RATE-LIMIT-CONCURRENCY-001 | Параллельные проверки не превышают лимит | Unit | Да | `tests/unit/test_rate_limiter.py` | [x] |
+| RATE-LIMIT-CONFIG-001 | Некорректная конфигурация limiter отклоняется | Unit | Да | `tests/unit/test_rate_limiter.py` | [x] |
+| RATE-LIMIT-IP-DIRECT-001 | IP берётся из `request.client.host` | Unit | Да | `tests/unit/test_client_ip.py` | [x] |
+| RATE-LIMIT-IP-PROXY-001 | Trusted `X-Forwarded-For` используется | Unit | Да | `tests/unit/test_client_ip.py` | [x] |
+| RATE-LIMIT-IP-PROXY-002 | Первый валидный адрес из цепочки используется | Unit | Да | `tests/unit/test_client_ip.py` | [x] |
+| RATE-LIMIT-IP-UNTRUSTED-001 | Header игнорируется без доверия proxy | Unit | Да | `tests/unit/test_client_ip.py` | [x] |
+| RATE-LIMIT-IP-FALLBACK-001 | Некорректный proxy header даёт fallback host | Unit | Да | `tests/unit/test_client_ip.py` | [x] |
+| RATE-LIMIT-IP-FALLBACK-002 | Отсутствующий client host даёт unknown | Unit | Да | `tests/unit/test_client_ip.py` | [x] |
+| RATE-LIMIT-IP-V4-001 | IPv4 поддерживается | Unit | Да | `tests/unit/test_client_ip.py` | [x] |
+| RATE-LIMIT-IP-V6-001 | IPv6 поддерживается | Unit | Да | `tests/unit/test_client_ip.py` | [x] |
+| RATE-LIMIT-CLIENT-KEY-001 | Client key стабилен и маскирует IP | Unit | Да | `tests/unit/test_client_ip.py` | [x] |
+| RATE-LIMIT-API-ALLOWED-001 | Запросы в пределах лимита создают обращения | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
+| RATE-LIMIT-API-EXCEEDED-001 | Превышение лимита даёт 429 | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
+| RATE-LIMIT-NO-PIPELINE-001 | 429 не вызывает pipeline | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
+| RATE-LIMIT-LOGGING-001 | Превышение логируется без полного IP | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
+| RATE-LIMIT-API-INDEPENDENT-IP-001 | Разные IP независимы в API | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
+| RATE-LIMIT-API-WINDOW-001 | Истечение окна разрешает новый API-запрос | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
+| RATE-LIMIT-API-INVALID-001 | Невалидный запрос учитывается в лимите | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
+| HONEYPOT-API-001 | Honeypot не создаёт запись и логируется | Integration | Да | `tests/integration/test_contact_rate_limit.py` | [x] |
 
 ## Финальный checklist перед сдачей проекта
 

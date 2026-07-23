@@ -24,6 +24,7 @@ from app.services.contact_service import ContactService
 from app.services.email_service import FakeEmailService, ResendEmailService
 from app.schemas.contact import ContactRequestCreate
 from app.schemas.contact_storage import AiStatus, ContactAiUpdate, ContactCategory, ContactPriority, EmailStatus, ProcessingStatus, Sentiment
+from app.core.rate_limiter import SlidingWindowRateLimiter
 
 
 def check_foundation(settings: Settings | None = None) -> int:
@@ -457,6 +458,58 @@ def run_contact_pipeline(ai_fallback: bool = False, email_failure: str | None = 
     return 0
 
 
+def check_rate_limit() -> int:
+    current_time = 1_000.0
+
+    def clock() -> float:
+        return current_time
+
+    limiter = SlidingWindowRateLimiter(limit=3, window_seconds=60, clock=clock)
+    client_key = "ip_sha256:test0001"
+    second_client_key = "ip_sha256:test0002"
+
+    try:
+        for attempt in range(1, 4):
+            decision = limiter.check(client_key)
+            if not decision.allowed:
+                raise AssertionError(f"Запрос {attempt} должен быть разрешён")
+            print(f"Запрос {attempt} из 3: разрешён")
+
+        blocked = limiter.check(client_key)
+        if blocked.allowed:
+            raise AssertionError("Запрос сверх лимита должен быть отклонён")
+        print("Запрос сверх лимита: отклонён")
+
+        if blocked.retry_after_seconds is None or blocked.retry_after_seconds <= 0:
+            raise AssertionError("Retry-After не рассчитан")
+        print("Retry-After рассчитан: успешно")
+        print(f"Retry-After: {blocked.retry_after_seconds}")
+
+        current_time += 61
+        print("Истечение окна без ожидания: успешно")
+
+        after_window = limiter.check(client_key)
+        if not after_window.allowed:
+            raise AssertionError("Запрос после окончания окна должен быть разрешён")
+        print("Новый запрос после окна: разрешён")
+
+        independent = limiter.check(second_client_key)
+        if not independent.allowed:
+            raise AssertionError("Независимый клиент должен быть разрешён")
+        print("Независимый клиент: разрешён")
+
+    except Exception as exc:
+        print("Итог: rate limiting завершился ошибкой")
+        print(f"Причина: {exc}")
+        return 1
+
+    print("\nProxyAPI: не вызывался")
+    print("Resend: не вызывался")
+    print("База данных: не использовалась")
+    print("\nИтог: rate limiting работает корректно")
+    return 0
+
+
 def _print_ai_result(result) -> None:
     print(f"Тональность: {result.analysis.sentiment.value}")
     print(f"Категория: {result.analysis.category.value}")
@@ -487,6 +540,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("check-foundation", help="Проверить фундамент проекта без внешних API")
     subparsers.add_parser("validate-contact", help="Проверить схемы и валидацию обращения без API")
     subparsers.add_parser("check-repository", help="Проверить репозиторий обращений на временной SQLite")
+    subparsers.add_parser("check-rate-limit", help="Проверить rate limiting без FastAPI и внешних сервисов")
     subparsers.add_parser("render-emails", help="Отрендерить preview email-шаблонов без отправки")
     email_parser = subparsers.add_parser("check-email", help="Проверить email-сервис")
     email_parser.add_argument("--live", action="store_true", help="Отправить одно тестовое письмо через Resend")
@@ -508,6 +562,8 @@ def main(argv: list[str] | None = None) -> int:
         return validate_contact()
     if args.command == "check-repository":
         return check_repository()
+    if args.command == "check-rate-limit":
+        return check_rate_limit()
     if args.command == "render-emails":
         return render_emails()
     if args.command == "check-email":

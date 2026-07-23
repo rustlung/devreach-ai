@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, status
 from starlette.concurrency import run_in_threadpool
 
-from app.api.dependencies import get_contact_service
+from app.api.dependencies import enforce_contact_rate_limit, get_contact_service
 from app.core.logging import get_request_id
 from app.schemas.contact import ContactRequestCreate, ContactResponse
 from app.services.contact_service import ContactService
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api", tags=["contact"])
     summary="Принять обращение с сайта",
     description="Сохраняет обращение, запускает AI-анализ и email-уведомления через основной pipeline.",
     response_description="Обращение принято и сохранено",
+    dependencies=[Depends(enforce_contact_rate_limit)],
     responses={
         201: {
             "description": "Обращение принято",
@@ -35,6 +36,7 @@ router = APIRouter(prefix="/api", tags=["contact"])
             },
         },
         422: {"description": "Переданные данные не прошли проверку"},
+        429: {"description": "Превышен лимит обращений"},
         500: {"description": "Внутренняя ошибка сервера"},
     },
     openapi_extra={
