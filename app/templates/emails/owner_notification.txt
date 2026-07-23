@@ -1,0 +1,24 @@
+Новое обращение с сайта
+
+Имя: {{ name }}
+Email: {{ email }}
+Телефон: {{ phone }}
+{% if created_at %}Дата обращения: {{ created_at }}
+{% endif %}
+Комментарий:
+{{ comment }}
+
+AI-анализ:
+{% if category %}Категория: {{ category }}
+{% endif %}{% if sentiment %}Тональность: {{ sentiment }}
+{% endif %}{% if priority %}Приоритет: {{ priority }}
+{% endif %}Статус AI: {{ ai_status_label }}
+{% if summary %}
+Краткое резюме:
+{{ summary }}
+{% endif %}{% if suggested_reply %}
+Предлагаемый ответ:
+{{ suggested_reply }}
+{% endif %}{% if ai_fallback_used %}
+AI fallback применён, результат требует ручной проверки.
+{% endif %}

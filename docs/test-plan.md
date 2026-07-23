@@ -185,6 +185,42 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | -- | -------- | ----------- | ------- | ------------------- | -------- |
 | AI-LIVE-001 | Один контролируемый live-запрос OpenAI | `OPENAI_API_KEY` задан, `AI_LIVE_REQUESTS_ENABLED=true`, пользователь явно запускает команду | `python -m app.cli analyze-comment --live` | Один structured-output ответ или fallback без падения приложения | [ ] |
 
+## Автоматические сценарии этапа 5
+
+Все проверки этапа 5 выполняются без `POST /api/contact`, OpenAI, сохранения email-статусов в БД и реальной отправки писем. Resend SDK в unit-тестах замокан.
+
+| ID | Описание | Предусловия | Входные данные | Шаги | Ожидаемый результат | Тип теста | Тестовая функция | Файл теста |
+| -- | -------- | ----------- | -------------- | ---- | ------------------- | -------- | ---------------- | ---------- |
+| EMAIL-SCHEMA-001 | Валидное email-сообщение принимается | Нет | `EmailMessage` | Создать схему | Схема создана | Unit | `test_valid_email_message_is_accepted` | `tests/unit/test_email_schemas.py` |
+| EMAIL-SCHEMA-002 | Невалидные поля письма отклоняются | Нет | пустой to, неверный email, пустые subject/html/text | Создать схему | `ValidationError` | Unit | `test_invalid_email_message_fields_are_rejected` | `tests/unit/test_email_schemas.py` |
+| EMAIL-SCHEMA-003 | Валидный результат отправки принимается | Нет | `EmailSendResult(status=sent)` | Создать схему | Схема создана | Unit | `test_valid_email_send_result_is_accepted` | `tests/unit/test_email_schemas.py` |
+| EMAIL-SCHEMA-004 | Неизвестный email-статус отклоняется | Нет | `status=unknown` | Создать схему | `ValidationError` | Unit | `test_unknown_email_status_is_rejected` | `tests/unit/test_email_schemas.py` |
+| EMAIL-RENDER-OWNER-001 | Письмо владельцу рендерится | Тестовый контекст | Контакт и AI summary | Построить owner message | HTML/text не пустые, данные есть | Unit | `test_owner_notification_is_rendered` | `tests/unit/test_email_templates.py` |
+| EMAIL-RENDER-USER-001 | Письмо пользователю рендерится безопасно | Тестовый контекст | Контакт, AI error | Построить user message | Нет внутренней классификации и техошибки | Unit | `test_user_confirmation_is_rendered_without_internal_classification` | `tests/unit/test_email_templates.py` |
+| EMAIL-RENDER-OPTIONAL-001 | Optional-поля не выводят `None` | Контекст без optional | Нет summary/category/status | Построить owner message | Строка `None` отсутствует | Unit | `test_missing_optional_fields_do_not_render_none` | `tests/unit/test_email_templates.py` |
+| EMAIL-HTML-ESCAPE-001 | HTML комментария экранируется | Тестовый контекст | `<script>alert("xss")</script>` | Построить owner message | Тег не исполняется, текст экранирован | Unit | `test_user_html_in_comment_is_escaped` | `tests/unit/test_email_templates.py` |
+| EMAIL-TEXT-001 | Переносы строк сохраняются | Тестовый контекст | многострочный комментарий | Построить owner message | Text хранит переносы, HTML использует `pre-wrap` | Unit | `test_comment_line_breaks_are_preserved` | `tests/unit/test_email_templates.py` |
+| EMAIL-HTML-ESCAPE-002 | Suggested reply экранируется | Тестовый контекст | `<script>` в suggested_reply | Построить user message | HTML экранирован | Unit | `test_user_suggested_reply_is_escaped` | `tests/unit/test_email_templates.py` |
+| EMAIL-RENDER-FALLBACK-001 | AI fallback отображается корректно | Тестовый контекст | `ai_status=fallback` | Построить оба письма | Владелец видит fallback, пользователь получает безопасный ответ | Unit | `test_ai_fallback_is_rendered_safely` | `tests/unit/test_email_templates.py` |
+| EMAIL-SEND-PAYLOAD-001 | Payload Resend формируется корректно | Mock Resend | `EmailMessage` | Вызвать `send()` | from/to/subject/html/text/reply_to корректны | Unit | `test_resend_payload_is_built_correctly` | `tests/unit/test_email_service.py` |
+| EMAIL-SEND-OWNER-001 | Уведомление владельцу отправляется на `OWNER_EMAIL` | Mock Resend | Контекст обращения | Вызвать `send_owner_notification()` | Получатель owner, reply_to пользователь | Unit | `test_owner_notification_uses_owner_email_and_user_reply_to` | `tests/unit/test_email_service.py` |
+| EMAIL-SEND-USER-001 | Подтверждение отправляется пользователю | Mock Resend | Контекст обращения | Вызвать `send_user_confirmation()` | Получатель пользователь | Unit | `test_user_confirmation_uses_user_email` | `tests/unit/test_email_service.py` |
+| EMAIL-SEND-RESULT-001 | Успешный ответ сохраняет message id | Mock Resend | Ответ с `id` | Вызвать `send()` | `status=sent`, `message_id` сохранён | Unit | `test_successful_resend_response_returns_sent_status` | `tests/unit/test_email_service.py` |
+| EMAIL-SKIPPED-DISABLED-001 | Live отключён возвращает skipped | Mock Resend | `EMAIL_LIVE_REQUESTS_ENABLED=false` | Вызвать `send()` | SDK не вызван, `status=skipped` | Unit | `test_disabled_live_requests_return_skipped` | `tests/unit/test_email_service.py` |
+| EMAIL-FAILED-CONFIG-001 | Отсутствующие настройки обрабатываются | Mock Resend | нет ключа/sender/owner | Вызвать send-методы | `status=failed`, конкретный error_code | Unit | `test_missing_email_settings_are_handled` | `tests/unit/test_email_service.py` |
+| EMAIL-FAILED-PROVIDER-001 | Ошибки Resend классифицируются | Mock Resend | auth/rate/timeout/connection/runtime | Вызвать `send()` | `status=failed`, безопасный error_code | Unit | `test_provider_errors_return_failed` | `tests/unit/test_email_service.py` |
+| EMAIL-FAILED-INVALID-RESPONSE-001 | Ответ без id считается ошибкой | Mock Resend | `{}` | Вызвать `send()` | `invalid_provider_response` | Unit | `test_invalid_provider_response_returns_failed` | `tests/unit/test_email_service.py` |
+| EMAIL-LOGGING-001 | Тело письма и PII не попадают в логи | Mock logger | email/body | Вызвать `send()` | В логах нет body и email | Unit | `test_email_body_and_personal_data_are_not_logged` | `tests/unit/test_email_service.py` |
+| EMAIL-FAKE-001 | Fake-сервис поддерживает статусы | Нет | success/failed/skipped | Вызвать fake `send()` | Статусы корректны, сообщения сохранены | Unit | `test_fake_email_service_modes` | `tests/unit/test_email_service.py` |
+| EMAIL-FAKE-002 | Fake exception имитирует ошибку | Нет | `mode=error` | Вызвать fake `send()` | `RuntimeError` | Unit | `test_fake_email_service_can_raise_error` | `tests/unit/test_email_service.py` |
+| EMAIL-FAKE-003 | Fake-сервис не вызывает Resend | Resend send заменён ошибкой | `EmailMessage` | Вызвать fake `send()` | Resend не вызван | Unit | `test_fake_email_service_does_not_call_resend` | `tests/unit/test_email_service.py` |
+
+## Ручные сценарии этапа 5
+
+| ID | Сценарий | Предусловия | Команда | Ожидаемый результат | Пройдено |
+| -- | -------- | ----------- | ------- | ------------------- | -------- |
+| EMAIL-LIVE-001 | Одно контролируемое live-письмо через Resend | `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`, `EMAIL_LIVE_REQUESTS_ENABLED=true`, явный получатель | `python -m app.cli check-email --live --recipient test@example.com` | Отправлено одно тестовое письмо или безопасная ошибка без раскрытия секретов | [ ] |
+
 ## Ручные сценарии
 
 - Выполнить `alembic upgrade head` из корня проекта.
@@ -306,6 +342,30 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | AI-FAKE-003 | Fake error имитирует исключение | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FAKE-004 | Fake service не создаёт OpenAI-клиент | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-LIVE-001 | Один контролируемый live-запрос OpenAI | Manual | Нет | CLI manual | [ ] |
+| EMAIL-SCHEMA-001 | Валидное email-сообщение принимается | Unit | Да | `tests/unit/test_email_schemas.py` | [x] |
+| EMAIL-SCHEMA-002 | Невалидные поля письма отклоняются | Unit | Да | `tests/unit/test_email_schemas.py` | [x] |
+| EMAIL-SCHEMA-003 | Валидный результат отправки принимается | Unit | Да | `tests/unit/test_email_schemas.py` | [x] |
+| EMAIL-SCHEMA-004 | Неизвестный email-статус отклоняется | Unit | Да | `tests/unit/test_email_schemas.py` | [x] |
+| EMAIL-RENDER-OWNER-001 | Письмо владельцу рендерится | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
+| EMAIL-RENDER-USER-001 | Письмо пользователю не раскрывает внутренние данные | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
+| EMAIL-RENDER-OPTIONAL-001 | Optional-поля не выводят `None` | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
+| EMAIL-HTML-ESCAPE-001 | HTML комментария экранируется | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
+| EMAIL-TEXT-001 | Переносы строк комментария сохраняются | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
+| EMAIL-HTML-ESCAPE-002 | Suggested reply экранируется | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
+| EMAIL-RENDER-FALLBACK-001 | AI fallback отображается корректно | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
+| EMAIL-SEND-PAYLOAD-001 | Payload Resend формируется корректно | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-SEND-OWNER-001 | Письмо владельцу отправляется на `OWNER_EMAIL` | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-SEND-USER-001 | Письмо пользователю отправляется на его email | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-SEND-RESULT-001 | Успешный ответ сохраняет provider message id | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-SKIPPED-DISABLED-001 | Live отключён возвращает skipped | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-FAILED-CONFIG-001 | Отсутствующие настройки возвращают failed | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-FAILED-PROVIDER-001 | Ошибки Resend возвращают failed | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-FAILED-INVALID-RESPONSE-001 | Ответ без id считается ошибкой | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-LOGGING-001 | Тело письма и PII не попадают в логи | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-FAKE-001 | Fake-сервис поддерживает success/failed/skipped | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-FAKE-002 | Fake exception имитирует ошибку | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-FAKE-003 | Fake-сервис не вызывает Resend | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-LIVE-001 | Одно контролируемое live-письмо через Resend | Manual | Нет | CLI manual | [ ] |
 
 ## Финальный checklist перед сдачей проекта
 

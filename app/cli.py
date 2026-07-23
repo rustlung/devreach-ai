@@ -4,6 +4,7 @@ import argparse
 import logging
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -17,9 +18,11 @@ from app.db.base import Base
 from app.db.models import ContactRequest
 from app.db.session import check_database_connection
 from app.repositories.contact_repository import ContactRepository
+from app.schemas.email import EmailMessage, EmailTemplateContext, EmailType
 from app.services.ai_service import FakeAIAnalysisService, OpenAIAnalysisService
+from app.services.email_service import FakeEmailService, ResendEmailService
 from app.schemas.contact import ContactRequestCreate
-from app.schemas.contact_storage import AiStatus, ContactAiUpdate, EmailStatus, ProcessingStatus
+from app.schemas.contact_storage import AiStatus, ContactAiUpdate, ContactCategory, ContactPriority, EmailStatus, ProcessingStatus, Sentiment
 
 
 def check_foundation(settings: Settings | None = None) -> int:
@@ -248,6 +251,127 @@ def analyze_comment(live: bool = False) -> int:
     return 0
 
 
+def _email_preview_settings(**overrides) -> Settings:
+    data = {
+        "APP_ENV": "test",
+        "EMAIL_FROM_ADDRESS": "hello@example.com",
+        "EMAIL_FROM_NAME": "DevReach AI",
+        "OWNER_EMAIL": "owner@example.com",
+        "EMAIL_REPLY_TO": "reply@example.com",
+        "EMAIL_SUBJECT_PREFIX": "[DevReach AI]",
+        "EMAIL_LIVE_REQUESTS_ENABLED": False,
+    }
+    data.update(overrides)
+    return Settings(**data)
+
+
+def _sample_email_context(**overrides) -> EmailTemplateContext:
+    data = {
+        "contact_id": 15,
+        "name": "Иван Иванов",
+        "phone": "+79991234567",
+        "email": "user@example.com",
+        "comment": 'Здравствуйте!\nХочу обсудить проект.\n<script>alert("xss")</script>',
+        "created_at": datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc),
+        "sentiment": Sentiment.NEUTRAL,
+        "category": ContactCategory.PROJECT_REQUEST,
+        "priority": ContactPriority.NORMAL,
+        "summary": "Пользователь хочет обсудить проект.",
+        "suggested_reply": "Спасибо за обращение. Я ознакомлюсь с деталями и свяжусь с вами.",
+        "ai_status": AiStatus.SUCCESS,
+    }
+    data.update(overrides)
+    return EmailTemplateContext(**data)
+
+
+def render_emails() -> int:
+    service = ResendEmailService(settings=_email_preview_settings())
+    context = _sample_email_context()
+    preview_dir = Path("tmp") / "email-preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        owner_message = service.build_owner_message(context)
+        user_message = service.build_user_message(context)
+        print("Рендеринг письма владельцу: успешно")
+        print("Рендеринг письма пользователю: успешно")
+
+        if not owner_message.html or not owner_message.text or not user_message.html or not user_message.text:
+            raise AssertionError("Один из шаблонов отрендерился пустым")
+        if "None" in owner_message.html + owner_message.text + user_message.html + user_message.text:
+            raise AssertionError("В письмах найдено строковое значение None")
+        if "<script>" in owner_message.html or "&lt;script&gt;" not in owner_message.html:
+            raise AssertionError("HTML-экранирование комментария не сработало")
+
+        (preview_dir / "owner_notification.html").write_text(owner_message.html, encoding="utf-8")
+        (preview_dir / "owner_notification.txt").write_text(owner_message.text, encoding="utf-8")
+        (preview_dir / "user_confirmation.html").write_text(user_message.html, encoding="utf-8")
+        (preview_dir / "user_confirmation.txt").write_text(user_message.text, encoding="utf-8")
+
+        print("HTML-экранирование: успешно")
+        print("Текстовые версии: успешно")
+        print(f"Preview сохранён: {preview_dir.as_posix()}/")
+        print("\nВнешняя отправка: не выполнялась")
+        print("Итог: email-шаблоны работают корректно")
+        return 0
+    except Exception as exc:
+        print("Итог: рендеринг email-шаблонов завершился ошибкой")
+        print(f"Причина: {exc}")
+        return 1
+
+
+def check_email(live: bool = False, recipient: str | None = None) -> int:
+    context = _sample_email_context()
+
+    if not live:
+        renderer = ResendEmailService(settings=_email_preview_settings())
+        fake_service = FakeEmailService()
+        owner_result = fake_service.send(renderer.build_owner_message(context), EmailType.OWNER_NOTIFICATION, context.contact_id)
+        user_result = fake_service.send(renderer.build_user_message(context), EmailType.USER_CONFIRMATION, context.contact_id)
+
+        if owner_result.status != EmailStatus.SENT or user_result.status != EmailStatus.SENT:
+            print("Итог: fake-проверка email завершилась ошибкой")
+            return 1
+        if len(fake_service.sent_messages) != 2:
+            print("Итог: fake-сервис не сохранил оба сообщения")
+            return 1
+
+        print("Формирование письма владельцу: успешно")
+        print("Формирование письма пользователю: успешно")
+        print("Fake-отправка владельцу: успешно")
+        print("Fake-отправка пользователю: успешно")
+        print("Сообщения сохранены в памяти fake-сервиса: успешно")
+        print("Реальные письма: не отправлялись")
+        print("\nИтог: email-сервис в fake-режиме работает корректно")
+        return 0
+
+    if not recipient:
+        print("Live-отправка не выполнена: укажите получателя через --recipient")
+        return 1
+
+    settings = get_settings()
+    message = EmailMessage(
+        to=recipient,
+        subject="Тестовое письмо DevReach AI",
+        html="<p>Это контролируемая live-проверка email-сервиса DevReach AI.</p>",
+        text="Это контролируемая live-проверка email-сервиса DevReach AI.",
+        reply_to=settings.email_reply_to,
+    )
+    print("ВНИМАНИЕ: будет отправлено одно реальное тестовое письмо через Resend.")
+    result = ResendEmailService(settings=settings).send(message, EmailType.TEST_MESSAGE)
+    if result.status == EmailStatus.SENT:
+        print(f"Provider message ID: {result.message_id}")
+        print("Итог: live-проверка email успешно завершена")
+        return 0
+
+    print(f"Итог: live-проверка email не выполнена, статус={result.status.value}")
+    if result.error_code:
+        print(f"Код ошибки: {result.error_code}")
+    if result.error_message:
+        print(f"Причина: {result.error_message}")
+    return 0 if result.status == EmailStatus.SKIPPED else 1
+
+
 def _print_ai_result(result) -> None:
     print(f"Тональность: {result.analysis.sentiment.value}")
     print(f"Категория: {result.analysis.category.value}")
@@ -273,6 +397,10 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("check-foundation", help="Проверить фундамент проекта без внешних API")
     subparsers.add_parser("validate-contact", help="Проверить схемы и валидацию обращения без API")
     subparsers.add_parser("check-repository", help="Проверить репозиторий обращений на временной SQLite")
+    subparsers.add_parser("render-emails", help="Отрендерить preview email-шаблонов без отправки")
+    email_parser = subparsers.add_parser("check-email", help="Проверить email-сервис")
+    email_parser.add_argument("--live", action="store_true", help="Отправить одно тестовое письмо через Resend")
+    email_parser.add_argument("--recipient", help="Явный получатель live-проверки email")
     analyze_parser = subparsers.add_parser("analyze-comment", help="Проверить AI-анализ комментария")
     analyze_parser.add_argument("--live", action="store_true", help="Выполнить один live-запрос OpenAI при явных настройках")
 
@@ -283,6 +411,10 @@ def main(argv: list[str] | None = None) -> int:
         return validate_contact()
     if args.command == "check-repository":
         return check_repository()
+    if args.command == "render-emails":
+        return render_emails()
+    if args.command == "check-email":
+        return check_email(live=args.live, recipient=args.recipient)
     if args.command == "analyze-comment":
         return analyze_comment(live=args.live)
     return 1

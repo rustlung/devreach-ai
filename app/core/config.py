@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     openai_timeout_seconds: float = Field(default=20.0, validation_alias="OPENAI_TIMEOUT_SECONDS")
     openai_max_retries: int = Field(default=1, validation_alias="OPENAI_MAX_RETRIES")
     ai_live_requests_enabled: bool = Field(default=False, validation_alias="AI_LIVE_REQUESTS_ENABLED")
+    resend_api_key: str | None = Field(default=None, validation_alias="RESEND_API_KEY")
+    email_from_address: str | None = Field(default=None, validation_alias="EMAIL_FROM_ADDRESS")
+    email_from_name: str = Field(default="DevReach AI", validation_alias="EMAIL_FROM_NAME")
+    owner_email: str | None = Field(default=None, validation_alias="OWNER_EMAIL")
+    email_live_requests_enabled: bool = Field(default=False, validation_alias="EMAIL_LIVE_REQUESTS_ENABLED")
+    email_reply_to: str | None = Field(default=None, validation_alias="EMAIL_REPLY_TO")
+    email_subject_prefix: str = Field(default="[DevReach AI]", validation_alias="EMAIL_SUBJECT_PREFIX")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -65,6 +72,14 @@ class Settings(BaseSettings):
     @field_validator("openai_api_key", mode="before")
     @classmethod
     def normalize_openai_api_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped_value = value.strip()
+        return stripped_value or None
+
+    @field_validator("resend_api_key", "email_from_address", "owner_email", "email_reply_to", mode="before")
+    @classmethod
+    def normalize_optional_email_setting(cls, value: str | None) -> str | None:
         if value is None:
             return None
         stripped_value = value.strip()
