@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DevReach AI - Python Backend Developer</title>
+    <meta name="description" content="Демонстрационный backend-проект DevReach AI с FastAPI, AI-интеграцией и формой обратной связи.">
+    <link rel="stylesheet" href="/static/css/main.css">
+    <script src="/static/js/contact-form.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Основная навигация">
+        <a class="brand" href="/" aria-label="DevReach AI">DevReach AI</a>
+        <div class="nav-links">
+          <a href="/docs">Swagger</a>
+          <a href="/api/health" target="_blank" rel="noopener">Health</a>
+          <a href="/api/metrics" target="_blank" rel="noopener">Metrics</a>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-content">
+          <p class="eyebrow">Python Backend Developer</p>
+          <h1 id="hero-title">DevReach AI Developer</h1>
+          <p class="lead">AI Automation / Integration: backend-сервисы, API, AI-интеграции и автоматизация рабочих процессов.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#contact-form">Перейти к форме</a>
+            <a class="button button-secondary" href="/docs">Открыть Swagger</a>
+          </div>
+        </div>
+        <aside class="status-panel" aria-label="Служебная информация проекта">
+          <span>Сервис: {{ app_name }}</span>
+          <span>Версия: {{ app_version }}</span>
+          <span>API: FastAPI + SQLite</span>
+        </aside>
+      </section>
+
+      <section class="section" aria-labelledby="stack-title">
+        <div class="section-heading">
+          <p class="eyebrow">Стек проекта</p>
+          <h2 id="stack-title">Технологии</h2>
+        </div>
+        <ul class="tag-grid" aria-label="Технологии текущего проекта">
+          <li>Python 3.12</li>
+          <li>FastAPI</li>
+          <li>SQLAlchemy</li>
+          <li>SQLite</li>
+          <li>Alembic</li>
+          <li>Pydantic</li>
+          <li>ProxyAPI / OpenAI-compatible API</li>
+          <li>Resend</li>
+          <li>Jinja2</li>
+          <li>pytest</li>
+        </ul>
+      </section>
+
+      <section class="section feature-band" aria-labelledby="features-title">
+        <div class="section-heading">
+          <p class="eyebrow">Возможности сервиса</p>
+          <h2 id="features-title">Что показывает демонстрация</h2>
+        </div>
+        <div class="feature-grid">
+          <article>
+            <h3>Данные</h3>
+            <p>Строгая нормализация и валидация имени, телефона, email и комментария.</p>
+          </article>
+          <article>
+            <h3>Pipeline</h3>
+            <p>Сохранение обращения, AI-классификация, email-уведомления и fallback без потери запроса.</p>
+          </article>
+          <article>
+            <h3>Надёжность</h3>
+            <p>Rate limiting, honeypot, health, metrics, подробное логирование и автотесты.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section contact-section" aria-labelledby="contact-title">
+        <div class="section-heading">
+          <p class="eyebrow">Обратная связь</p>
+          <h2 id="contact-title">Отправить обращение</h2>
+        </div>
+
+        <form id="contact-form" class="contact-form" data-endpoint="/api/contact" novalidate>
+          <div class="field">
+            <label for="contact-name">Имя</label>
+            <input id="contact-name" name="name" type="text" autocomplete="name" minlength="2" maxlength="80" required>
+            <p class="field-error" id="contact-name-error"></p>
+          </div>
+
+          <div class="field">
+            <label for="contact-phone">Телефон</label>
+            <input id="contact-phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" minlength="8" maxlength="32" required>
+            <p class="field-error" id="contact-phone-error"></p>
+          </div>
+
+          <div class="field">
+            <label for="contact-email">Email</label>
+            <input id="contact-email" name="email" type="email" autocomplete="email" maxlength="254" required>
+            <p class="field-error" id="contact-email-error"></p>
+          </div>
+
+          <div class="field field-wide">
+            <label for="contact-comment">Комментарий</label>
+            <textarea id="contact-comment" name="comment" autocomplete="off" minlength="5" maxlength="5000" rows="7" required></textarea>
+            <p class="field-error" id="contact-comment-error"></p>
+          </div>
+
+          <div class="visually-hidden-trap" aria-hidden="true">
+            <label for="contact-website">Сайт</label>
+            <input id="contact-website" name="website" type="text" autocomplete="off" tabindex="-1">
+          </div>
+
+          <div class="form-footer">
+            <button class="button button-primary" type="submit" data-submit-text="Отправить обращение" data-loading-text="Отправка...">
+              Отправить обращение
+            </button>
+            <p class="form-note">Форма отправляет JSON в текущий backend API.</p>
+          </div>
+
+          <div class="form-result" data-result role="status" aria-live="polite"></div>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

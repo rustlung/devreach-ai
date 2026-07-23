@@ -58,8 +58,6 @@ class ContactAiUpdate(BaseModel):
 class ContactEmailStatusUpdate(BaseModel):
     owner_email_status: EmailStatus | None = None
     owner_email_error: str | None = None
-    user_email_status: EmailStatus | None = None
-    user_email_error: str | None = None
 
 
 class ContactMetrics(BaseModel):
@@ -67,7 +65,6 @@ class ContactMetrics(BaseModel):
     by_processing_status: dict[str, int]
     by_ai_status: dict[str, int]
     owner_email: dict[str, int]
-    user_email: dict[str, int]
     by_category: dict[str, int]
 
     model_config = ConfigDict(frozen=True)

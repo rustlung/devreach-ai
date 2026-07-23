@@ -61,8 +61,6 @@ class ContactRequest(Base):
 
     owner_email_status: Mapped[str] = mapped_column(String(32), default=EmailStatus.PENDING.value, nullable=False)
     owner_email_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    user_email_status: Mapped[str] = mapped_column(String(32), default=EmailStatus.PENDING.value, nullable=False)
-    user_email_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     processing_status: Mapped[str] = mapped_column(
         String(32),

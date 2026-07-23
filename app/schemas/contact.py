@@ -130,20 +130,13 @@ class ContactRequestCreate(BaseModel):
         return self
 
 
-class ContactEmailStatuses(BaseModel):
-    owner: EmailStatus
-    user: EmailStatus
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ContactResponse(BaseModel):
     id: int
     status: ProcessingStatus
     message: str
     ai_processed: bool
     ai_status: AiStatus
-    emails: ContactEmailStatuses
+    owner_email_status: EmailStatus
     request_id: str
 
     model_config = ConfigDict(extra="forbid")

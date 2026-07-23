@@ -78,7 +78,6 @@ def test_create_contact_sets_initial_statuses(repository: ContactRepository, _ca
     assert contact.processing_status == ProcessingStatus.RECEIVED.value
     assert contact.ai_status == AiStatus.PENDING.value
     assert contact.owner_email_status == EmailStatus.PENDING.value
-    assert contact.user_email_status == EmailStatus.PENDING.value
     assert contact.sentiment is None
     assert contact.ai_error is None
 
@@ -186,44 +185,31 @@ def test_update_ai_result_rejects_missing_contact(repository: ContactRepository,
 
 @readable_test_id("статус письма владельцу обновляется отдельно")
 def test_update_owner_email_status_updates_only_owner(repository: ContactRepository, _case_id) -> None:
-    """REPOSITORY-EMAIL-UPDATE-001: статус письма владельцу обновляется отдельно."""
+    """REPOSITORY-EMAIL-UPDATE-001: статус единственного письма владельцу обновляется отдельно."""
     contact = create_contact(repository)
 
-    updated_contact = repository.update_owner_email_status(contact.id, EmailStatus.SENT)
+    updated_contact = repository.update_owner_email_status(contact.id, EmailStatus.FAILED, "Тестовая ошибка письма")
 
-    assert updated_contact.owner_email_status == EmailStatus.SENT.value
-    assert updated_contact.user_email_status == EmailStatus.PENDING.value
-
-
-@readable_test_id("статус письма пользователю обновляется отдельно")
-def test_update_user_email_status_updates_only_user(repository: ContactRepository, _case_id) -> None:
-    """REPOSITORY-EMAIL-UPDATE-002: статус письма пользователю обновляется отдельно."""
-    contact = create_contact(repository)
-
-    updated_contact = repository.update_user_email_status(contact.id, EmailStatus.FAILED, "Тестовая ошибка письма")
-
-    assert updated_contact.user_email_status == EmailStatus.FAILED.value
-    assert updated_contact.user_email_error == "Тестовая ошибка письма"
-    assert updated_contact.owner_email_status == EmailStatus.PENDING.value
+    assert updated_contact.owner_email_status == EmailStatus.FAILED.value
+    assert updated_contact.owner_email_error == "Тестовая ошибка письма"
+    assert not hasattr(updated_contact, "user_email_status")
+    assert not hasattr(updated_contact, "user_email_error")
 
 
-@readable_test_id("оба email статуса можно обновить одной операцией")
-def test_update_email_statuses_can_update_both_statuses(repository: ContactRepository, _case_id) -> None:
-    """REPOSITORY-EMAIL-UPDATE-003: оба email-статуса можно обновить одной операцией."""
+@readable_test_id("общий update email статуса обновляет только owner")
+def test_update_email_statuses_updates_owner_only(repository: ContactRepository, _case_id) -> None:
+    """EMAIL-OWNER-ONLY-001: общий метод email-статуса больше не содержит user autoreply."""
     contact = create_contact(repository)
 
     updated_contact = repository.update_email_statuses(
         contact.id,
         ContactEmailStatusUpdate(
             owner_email_status=EmailStatus.SENT,
-            user_email_status=EmailStatus.FAILED,
-            user_email_error="Тестовая ошибка письма",
         ),
     )
 
     assert updated_contact.owner_email_status == EmailStatus.SENT.value
-    assert updated_contact.user_email_status == EmailStatus.FAILED.value
-    assert updated_contact.user_email_error == "Тестовая ошибка письма"
+    assert not hasattr(updated_contact, "user_email_status")
 
 
 @readable_test_id("общий статус обработки обновляется отдельно")
@@ -247,7 +233,6 @@ def test_get_metrics_returns_zero_values_for_empty_database(repository: ContactR
     assert metrics.by_processing_status == {}
     assert metrics.by_ai_status == {}
     assert metrics.owner_email == {}
-    assert metrics.user_email == {}
     assert metrics.by_category == {}
 
 
@@ -265,7 +250,7 @@ def test_get_metrics_aggregates_multiple_contacts(repository: ContactRepository,
         ContactAiUpdate(ai_status=AiStatus.FAILED, category="consulting"),
     )
     repository.update_owner_email_status(first.id, EmailStatus.SENT)
-    repository.update_user_email_status(second.id, EmailStatus.FAILED, "Тестовая ошибка письма")
+    repository.update_owner_email_status(second.id, EmailStatus.FAILED, "Тестовая ошибка письма")
     repository.update_processing_status(second.id, ProcessingStatus.COMPLETED_WITH_ERRORS)
 
     metrics = repository.get_metrics()
@@ -276,7 +261,7 @@ def test_get_metrics_aggregates_multiple_contacts(repository: ContactRepository,
     assert metrics.by_ai_status[AiStatus.SUCCESS.value] == 1
     assert metrics.by_ai_status[AiStatus.FAILED.value] == 1
     assert metrics.owner_email[EmailStatus.SENT.value] == 1
-    assert metrics.user_email[EmailStatus.FAILED.value] == 1
+    assert metrics.owner_email[EmailStatus.FAILED.value] == 1
     assert metrics.by_category == {"consulting": 1, "web": 1}
 
 

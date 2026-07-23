@@ -5,33 +5,18 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class EmailMetrics(BaseModel):
-    owner: dict[str, int]
-    user: dict[str, int]
-
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("owner", "user")
-    @classmethod
-    def validate_non_negative_email_values(cls, value: dict[str, int]) -> dict[str, int]:
-        negative_keys = [key for key, count in value.items() if count < 0]
-        if negative_keys:
-            raise ValueError("Значения email-метрик не могут быть отрицательными")
-        return value
-
-
 class ContactMetricsResponse(BaseModel):
     total_contacts: int = Field(ge=0)
     processing: dict[str, int]
     ai: dict[str, int]
-    emails: EmailMetrics
+    emails: dict[str, int]
     categories: dict[str, int]
     generated_at: datetime
     request_id: str = Field(min_length=1)
 
     model_config = ConfigDict(extra="forbid")
 
-    @field_validator("processing", "ai", "categories")
+    @field_validator("processing", "ai", "emails", "categories")
     @classmethod
     def validate_non_negative_metric_values(cls, value: dict[str, int]) -> dict[str, int]:
         negative_keys = [key for key, count in value.items() if count < 0]

@@ -7,7 +7,7 @@ from typing import Protocol
 from app.db.models import ContactRequest
 from app.repositories.contact_repository import ContactRepository, ContactRepositoryError
 from app.schemas.ai import AIServiceResult
-from app.schemas.contact import ContactEmailStatuses, ContactRequestCreate, ContactResponse
+from app.schemas.contact import ContactRequestCreate, ContactResponse
 from app.schemas.contact_storage import (
     AiStatus,
     ContactAiUpdate,
@@ -44,14 +44,6 @@ class ContactServiceRepository(Protocol):
     ) -> ContactRequest:
         ...
 
-    def update_user_email_status(
-        self,
-        contact_id: int,
-        status: EmailStatus,
-        error: str | None = None,
-    ) -> ContactRequest:
-        ...
-
 
 class ContactServiceAI(Protocol):
     def analyze_comment(self, comment: str) -> AIServiceResult:
@@ -60,9 +52,6 @@ class ContactServiceAI(Protocol):
 
 class ContactServiceEmail(Protocol):
     def send_owner_notification(self, context: EmailTemplateContext) -> EmailSendResult:
-        ...
-
-    def send_user_confirmation(self, context: EmailTemplateContext) -> EmailSendResult:
         ...
 
 
@@ -107,10 +96,8 @@ class ContactService:
             email_context = self._build_email_context(contact, ai_result)
             owner_result = self._run_owner_email_stage(contact_id, email_context, request_id)
             contact = self._save_owner_email_result(contact_id, owner_result, request_id)
-            user_result = self._run_user_email_stage(contact_id, email_context, request_id)
-            contact = self._save_user_email_result(contact_id, user_result, request_id)
 
-            final_status = self._determine_processing_status(ai_result, owner_result, user_result)
+            final_status = self._determine_processing_status(ai_result, owner_result)
             contact = self._update_processing_status(contact_id, final_status, request_id, "save_final_status")
         except ContactProcessingError:
             raise
@@ -121,13 +108,12 @@ class ContactService:
         duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
         logger.info(
             "event=contact_pipeline_completed request_id=%s contact_id=%s processing_status=%s "
-            "ai_status=%s owner_email_status=%s user_email_status=%s duration_ms=%s",
+            "ai_status=%s owner_email_status=%s duration_ms=%s",
             request_id,
             contact_id,
             contact.processing_status,
             contact.ai_status,
             contact.owner_email_status,
-            contact.user_email_status,
             duration_ms,
         )
 
@@ -139,10 +125,7 @@ class ContactService:
             message="Обращение принято",
             ai_processed=ai_result.status == AiStatus.SUCCESS,
             ai_status=AiStatus(contact.ai_status),
-            emails=ContactEmailStatuses(
-                owner=EmailStatus(contact.owner_email_status),
-                user=EmailStatus(contact.user_email_status),
-            ),
+            owner_email_status=EmailStatus(contact.owner_email_status),
             request_id=request_id,
         )
 
@@ -151,8 +134,8 @@ class ContactService:
         try:
             ai_result = self.ai_service.analyze_comment(contact.comment)
         except Exception as exc:
-            # AI fallback не останавливает pipeline: обращение уже сохранено, а
-            # пользователь и владелец всё равно должны получить безопасную обработку.
+            # AI fallback не останавливает pipeline: обращение уже сохранено,
+            # а владелец всё равно должен получить письмо с безопасным черновиком.
             logger.exception(
                 "event=contact_ai_stage_fallback request_id=%s contact_id=%s reason=unexpected_exception error_type=%s",
                 request_id,
@@ -235,6 +218,7 @@ class ContactService:
         context: EmailTemplateContext,
         request_id: str,
     ) -> EmailSendResult:
+        logger.info("event=contact_owner_email_stage_started request_id=%s contact_id=%s", request_id, contact_id)
         try:
             result = self.email_service.send_owner_notification(context)
         except Exception as exc:
@@ -260,39 +244,6 @@ class ContactService:
         )
         return result
 
-    def _run_user_email_stage(
-        self,
-        contact_id: int,
-        context: EmailTemplateContext,
-        request_id: str,
-    ) -> EmailSendResult:
-        try:
-            # Письма независимы: сбой уведомления владельца не должен отменять
-            # подтверждение пользователю, и наоборот.
-            result = self.email_service.send_user_confirmation(context)
-        except Exception as exc:
-            logger.exception(
-                "event=contact_user_email_stage_failed request_id=%s contact_id=%s error_type=%s",
-                request_id,
-                contact_id,
-                type(exc).__name__,
-            )
-            result = EmailSendResult(
-                status=EmailStatus.FAILED,
-                provider="email_service",
-                error_code="email_service_exception",
-                error_message="Email-сервис выбросил исключение",
-            )
-
-        logger.info(
-            "event=contact_user_email_stage_completed request_id=%s contact_id=%s email_status=%s error_code=%s",
-            request_id,
-            contact_id,
-            result.status.value,
-            result.error_code,
-        )
-        return result
-
     def _save_owner_email_result(
         self,
         contact_id: int,
@@ -309,33 +260,12 @@ class ContactService:
             self._log_critical_failure(request_id, contact_id, "save_owner_email_status", exc)
             raise ContactProcessingError("Не удалось сохранить статус письма владельцу") from exc
 
-    def _save_user_email_result(
-        self,
-        contact_id: int,
-        result: EmailSendResult,
-        request_id: str,
-    ) -> ContactRequest:
-        try:
-            return self.repository.update_user_email_status(
-                contact_id,
-                result.status,
-                self._safe_error(result.error_code),
-            )
-        except ContactRepositoryError as exc:
-            self._log_critical_failure(request_id, contact_id, "save_user_email_status", exc)
-            raise ContactProcessingError("Не удалось сохранить статус письма пользователю") from exc
-
     def _determine_processing_status(
         self,
         ai_result: AIServiceResult,
         owner_result: EmailSendResult,
-        user_result: EmailSendResult,
     ) -> ProcessingStatus:
-        if (
-            ai_result.status == AiStatus.SUCCESS
-            and owner_result.status == EmailStatus.SENT
-            and user_result.status == EmailStatus.SENT
-        ):
+        if ai_result.status == AiStatus.SUCCESS and owner_result.status == EmailStatus.SENT:
             return ProcessingStatus.COMPLETED
         return ProcessingStatus.COMPLETED_WITH_ERRORS
 

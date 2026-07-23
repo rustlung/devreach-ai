@@ -100,14 +100,14 @@ def test_contact_api_success_creates_contact(contact_api_context, _case_id) -> N
     assert payload["message"] == "Обращение принято"
     assert payload["ai_processed"] is True
     assert payload["ai_status"] == "success"
-    assert payload["emails"] == {"owner": "sent", "user": "sent"}
+    assert payload["owner_email_status"] == "sent"
+    assert "emails" not in payload
     assert payload["request_id"] == response.headers["X-Request-ID"] == "api-request-1"
     assert contact.name == "Иван Иванов"
     assert contact.phone == "+79991234567"
     assert contact.email == "user@example.com"
     assert contact.ai_status == AiStatus.SUCCESS.value
     assert contact.owner_email_status == EmailStatus.SENT.value
-    assert contact.user_email_status == EmailStatus.SENT.value
     assert contact.processing_status == ProcessingStatus.COMPLETED.value
 
 
@@ -143,7 +143,8 @@ def test_contact_api_email_failure_returns_completed_with_errors(contact_api_con
     contact = get_only_contact(session)
     assert response.status_code == 201
     assert payload["status"] == "completed_with_errors"
-    assert payload["emails"] == {"owner": "failed", "user": "sent"}
+    assert payload["owner_email_status"] == "failed"
+    assert "user" not in str(payload)
     assert "fake_failed" not in str(payload)
     assert contact.owner_email_status == EmailStatus.FAILED.value
     assert contact.processing_status == ProcessingStatus.COMPLETED_WITH_ERRORS.value

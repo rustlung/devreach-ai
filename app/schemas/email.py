@@ -14,7 +14,6 @@ EMAIL_SUBJECT_MAX_LENGTH = 200
 
 class EmailType(StrEnum):
     OWNER_NOTIFICATION = "owner_notification"
-    USER_CONFIRMATION = "user_confirmation"
     TEST_MESSAGE = "test_message"
 
 

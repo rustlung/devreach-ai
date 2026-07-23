@@ -19,12 +19,6 @@ from app.schemas.email import EmailMessage, EmailSendResult, EmailTemplateContex
 logger = logging.getLogger(__name__)
 _EMAIL_ADDRESS_ADAPTER = TypeAdapter(EmailStr)
 
-SAFE_USER_REPLY_FALLBACK = (
-    "Спасибо за обращение. Сообщение получено, я ознакомлюсь с ним и свяжусь с вами "
-    "при первой возможности."
-)
-
-
 class EmailDeliveryService(Protocol):
     def send(self, message: EmailMessage, email_type: EmailType, contact_id: int | None = None) -> EmailSendResult:
         ...
@@ -64,16 +58,6 @@ class ResendEmailService:
             reply_to=context.email,
         )
 
-    def build_user_message(self, context: EmailTemplateContext) -> EmailMessage:
-        rendered = self._render_templates(EmailType.USER_CONFIRMATION, context)
-        return EmailMessage(
-            to=context.email,
-            subject="Ваше обращение получено - DevReach AI",
-            html=rendered["html"],
-            text=rendered["text"],
-            reply_to=self.settings.email_reply_to,
-        )
-
     def send_owner_notification(self, context: EmailTemplateContext) -> EmailSendResult:
         if not self.settings.owner_email:
             return self._failed(
@@ -83,9 +67,6 @@ class ResendEmailService:
                 "OWNER_EMAIL не задан",
             )
         return self.send(self.build_owner_message(context), EmailType.OWNER_NOTIFICATION, context.contact_id)
-
-    def send_user_confirmation(self, context: EmailTemplateContext) -> EmailSendResult:
-        return self.send(self.build_user_message(context), EmailType.USER_CONFIRMATION, context.contact_id)
 
     def send(self, message: EmailMessage, email_type: EmailType, contact_id: int | None = None) -> EmailSendResult:
         start_time = time.perf_counter()
@@ -165,12 +146,7 @@ class ResendEmailService:
         return {"html": html, "text": text}
 
     def _build_template_context(self, context: EmailTemplateContext, email_type: EmailType) -> dict[str, Any]:
-        user_reply = context.suggested_reply or SAFE_USER_REPLY_FALLBACK
-        subject = (
-            "Ваше обращение получено - DevReach AI"
-            if email_type == EmailType.USER_CONFIRMATION
-            else self._build_owner_subject(context)
-        )
+        subject = self._build_owner_subject(context)
         return {
             "subject": subject,
             "contact_id": context.contact_id,
@@ -186,9 +162,6 @@ class ResendEmailService:
             "suggested_reply": context.suggested_reply,
             "ai_status_label": self._build_ai_status_label(context),
             "ai_fallback_used": context.ai_status == AiStatus.FALLBACK,
-            # Пользователю не передаются технические ошибки AI/email и внутренняя
-            # классификация: подтверждение должно быть безопасным и внешним.
-            "user_reply": user_reply,
         }
 
     def _build_owner_subject(self, context: EmailTemplateContext) -> str:
@@ -293,10 +266,9 @@ class ResendEmailService:
 
 
 class FakeEmailService:
-    def __init__(self, mode: str = "success", owner_mode: str | None = None, user_mode: str | None = None) -> None:
+    def __init__(self, mode: str = "success", owner_mode: str | None = None) -> None:
         self.mode = mode
         self.owner_mode = owner_mode
-        self.user_mode = user_mode
         self.sent_messages: list[dict[str, Any]] = []
 
     def send(self, message: EmailMessage, email_type: EmailType, contact_id: int | None = None) -> EmailSendResult:
@@ -309,7 +281,7 @@ class FakeEmailService:
         email_type: EmailType,
         contact_id: int | None,
     ) -> EmailSendResult:
-        if mode == "error":
+        if mode in {"error", "exception"}:
             raise RuntimeError("Тестовая ошибка fake email")
 
         self.sent_messages.append(
@@ -345,12 +317,3 @@ class FakeEmailService:
             reply_to=context.email,
         )
         return self._send_with_mode(self.owner_mode or self.mode, message, EmailType.OWNER_NOTIFICATION, context.contact_id)
-
-    def send_user_confirmation(self, context: EmailTemplateContext) -> EmailSendResult:
-        message = EmailMessage(
-            to=context.email,
-            subject="Fake user confirmation",
-            html="<p>Fake user confirmation</p>",
-            text="Fake user confirmation",
-        )
-        return self._send_with_mode(self.user_mode or self.mode, message, EmailType.USER_CONFIRMATION, context.contact_id)

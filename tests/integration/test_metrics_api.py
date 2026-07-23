@@ -22,7 +22,6 @@ PERSONAL_KEYS = {
     "summary",
     "suggested_reply",
     "owner_email_error",
-    "user_email_error",
     "ai_error",
 }
 PERSONAL_VALUES = {
@@ -59,8 +58,8 @@ def test_metrics_empty_database_returns_zero_values(tmp_path, _case_id) -> None:
     assert payload["request_id"] == response.headers["X-Request-ID"] == "metrics-empty"
     assert all(value == 0 for value in payload["processing"].values())
     assert all(value == 0 for value in payload["ai"].values())
-    assert all(value == 0 for value in payload["emails"]["owner"].values())
-    assert all(value == 0 for value in payload["emails"]["user"].values())
+    assert all(value == 0 for value in payload["emails"].values())
+    assert "user" not in payload["emails"]
     assert all(value == 0 for value in payload["categories"].values())
 
 
@@ -85,11 +84,10 @@ def test_metrics_populated_database_returns_exact_aggregates(tmp_path, _case_id)
     assert payload["ai"][AiStatus.SUCCESS.value] == 1
     assert payload["ai"][AiStatus.FALLBACK.value] == 1
     assert payload["ai"][AiStatus.FAILED.value] == 1
-    assert payload["emails"]["owner"][EmailStatus.SENT.value] == 2
-    assert payload["emails"]["owner"][EmailStatus.FAILED.value] == 1
-    assert payload["emails"]["user"][EmailStatus.SENT.value] == 1
-    assert payload["emails"]["user"][EmailStatus.SKIPPED.value] == 1
-    assert payload["emails"]["user"][EmailStatus.FAILED.value] == 1
+    assert payload["emails"][EmailStatus.SENT.value] == 1
+    assert payload["emails"][EmailStatus.SKIPPED.value] == 1
+    assert payload["emails"][EmailStatus.FAILED.value] == 1
+    assert "user" not in payload["emails"]
     assert payload["categories"]["project_request"] == 1
     assert payload["categories"]["consultation"] == 1
     assert payload["categories"]["unknown"] == 1
@@ -204,17 +202,14 @@ def seed_metrics_contacts(session) -> None:
         ),
     )
     repository.update_owner_email_status(first.id, EmailStatus.SENT)
-    repository.update_user_email_status(first.id, EmailStatus.SENT)
     repository.update_processing_status(first.id, ProcessingStatus.COMPLETED)
 
     repository.update_ai_result(second.id, ContactAiUpdate(ai_status=AiStatus.FALLBACK, category="consultation"))
-    repository.update_owner_email_status(second.id, EmailStatus.SENT)
-    repository.update_user_email_status(second.id, EmailStatus.SKIPPED)
+    repository.update_owner_email_status(second.id, EmailStatus.SKIPPED)
     repository.update_processing_status(second.id, ProcessingStatus.COMPLETED_WITH_ERRORS)
 
     repository.update_ai_result(third.id, ContactAiUpdate(ai_status=AiStatus.FAILED, category="legacy_value", ai_error="provider failed"))
     repository.update_owner_email_status(third.id, EmailStatus.FAILED, "owner failed")
-    repository.update_user_email_status(third.id, EmailStatus.FAILED, "user failed")
     repository.update_processing_status(third.id, ProcessingStatus.FAILED)
 
 

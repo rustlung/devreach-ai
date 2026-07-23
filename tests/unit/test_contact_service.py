@@ -8,7 +8,7 @@ from app.db.base import Base
 from app.repositories.contact_repository import ContactRepository, ContactRepositoryError
 from app.schemas.contact import ContactRequestCreate
 from app.schemas.contact_storage import AiStatus, EmailStatus, ProcessingStatus
-from app.schemas.email import EmailSendResult, EmailTemplateContext
+from app.schemas.email import EmailSendResult, EmailTemplateContext, EmailType
 from app.services import contact_service as contact_service_module
 from app.services.ai_service import FakeAIAnalysisService
 from app.services.contact_service import ContactProcessingError, ContactService
@@ -54,18 +54,13 @@ def make_contact_data(**overrides) -> ContactRequestCreate:
 
 
 class RecordingEmailService(FakeEmailService):
-    def __init__(self, owner_mode: str = "success", user_mode: str = "success") -> None:
-        super().__init__(owner_mode=owner_mode, user_mode=user_mode)
+    def __init__(self, owner_mode: str = "success") -> None:
+        super().__init__(owner_mode=owner_mode)
         self.owner_contexts: list[EmailTemplateContext] = []
-        self.user_contexts: list[EmailTemplateContext] = []
 
     def send_owner_notification(self, context: EmailTemplateContext) -> EmailSendResult:
         self.owner_contexts.append(context)
         return super().send_owner_notification(context)
-
-    def send_user_confirmation(self, context: EmailTemplateContext) -> EmailSendResult:
-        self.user_contexts.append(context)
-        return super().send_user_confirmation(context)
 
 
 class RaisingAIService:
@@ -94,7 +89,7 @@ class CreateFailingRepository:
 
 @readable_test_id("полный успех contact service завершает pipeline")
 def test_contact_service_processes_full_success(repository: ContactRepository, monkeypatch, _case_id) -> None:
-    """PIPELINE-SUCCESS-001: успешный pipeline сохраняет обращение, AI и оба email-статуса."""
+    """PIPELINE-SUCCESS-001: успешный pipeline сохраняет обращение, AI и owner email status."""
     logger_spy = Mock()
     monkeypatch.setattr(contact_service_module, "logger", logger_spy)
     email_service = RecordingEmailService()
@@ -108,12 +103,14 @@ def test_contact_service_processes_full_success(repository: ContactRepository, m
     assert contact.phone == "+79991234567"
     assert contact.ai_status == AiStatus.SUCCESS.value
     assert contact.owner_email_status == EmailStatus.SENT.value
-    assert contact.user_email_status == EmailStatus.SENT.value
     assert contact.processing_status == ProcessingStatus.COMPLETED.value
     assert response.status == ProcessingStatus.COMPLETED
     assert response.ai_processed is True
+    assert response.owner_email_status == EmailStatus.SENT
     assert response.request_id == TEST_REQUEST_ID
-    assert len(email_service.sent_messages) == 2
+    assert len(email_service.sent_messages) == 1
+    assert email_service.sent_messages[0]["email_type"] == EmailType.OWNER_NOTIFICATION
+    assert email_service.owner_contexts[0].email == contact.email
 
     log_text = " ".join(str(arg) for call in logger_spy.info.call_args_list for arg in call.args)
     assert "Иван Иванов" not in log_text
@@ -123,7 +120,7 @@ def test_contact_service_processes_full_success(repository: ContactRepository, m
 
 @readable_test_id("ai fallback сохраняется и pipeline продолжается")
 def test_contact_service_continues_after_ai_fallback(repository: ContactRepository, _case_id) -> None:
-    """PIPELINE-AI-FALLBACK-001: AI fallback сохраняется и письма всё равно отправляются."""
+    """PIPELINE-AI-FALLBACK-001: AI fallback сохраняется и письмо владельцу всё равно отправляется."""
     email_service = RecordingEmailService()
     service = ContactService(repository, TrackingAIService(mode="fallback"), email_service)
 
@@ -133,8 +130,8 @@ def test_contact_service_continues_after_ai_fallback(repository: ContactReposito
     assert contact is not None
     assert contact.ai_status == AiStatus.FALLBACK.value
     assert contact.ai_error == "fake_fallback"
-    assert len(email_service.sent_messages) == 2
-    assert email_service.user_contexts[0].ai_status == AiStatus.FALLBACK
+    assert len(email_service.sent_messages) == 1
+    assert email_service.owner_contexts[0].ai_status == AiStatus.FALLBACK
     assert response.status == ProcessingStatus.COMPLETED_WITH_ERRORS
     assert response.ai_processed is False
 
@@ -152,12 +149,12 @@ def test_contact_service_converts_ai_exception_to_fallback(repository: ContactRe
     assert contact.ai_status == AiStatus.FALLBACK.value
     assert contact.ai_error == "ai_service_exception"
     assert response.status == ProcessingStatus.COMPLETED_WITH_ERRORS
-    assert len(email_service.sent_messages) == 2
+    assert len(email_service.sent_messages) == 1
 
 
-@readable_test_id("ошибка письма владельцу не отменяет письмо пользователю")
-def test_owner_email_failure_does_not_stop_user_email(repository: ContactRepository, _case_id) -> None:
-    """PIPELINE-OWNER-EMAIL-FAILED-001: сбой письма владельцу сохраняется отдельно."""
+@readable_test_id("ошибка письма владельцу даёт частичный успех")
+def test_owner_email_failure_results_in_completed_with_errors(repository: ContactRepository, _case_id) -> None:
+    """PIPELINE-OWNER-EMAIL-FAILED-001: сбой письма владельцу даёт completed_with_errors."""
     email_service = RecordingEmailService(owner_mode="failed")
     service = ContactService(repository, TrackingAIService(), email_service)
 
@@ -166,14 +163,15 @@ def test_owner_email_failure_does_not_stop_user_email(repository: ContactReposit
 
     assert contact is not None
     assert contact.owner_email_status == EmailStatus.FAILED.value
-    assert contact.user_email_status == EmailStatus.SENT.value
     assert response.status == ProcessingStatus.COMPLETED_WITH_ERRORS
+    assert response.owner_email_status == EmailStatus.FAILED
+    assert len(email_service.sent_messages) == 1
 
 
-@readable_test_id("ошибка письма пользователю не отменяет письмо владельцу")
-def test_user_email_failure_does_not_cancel_owner_email(repository: ContactRepository, _case_id) -> None:
-    """PIPELINE-USER-EMAIL-FAILED-001: сбой письма пользователю сохраняется отдельно."""
-    email_service = RecordingEmailService(user_mode="failed")
+@readable_test_id("pipeline отправляет только письмо владельцу")
+def test_contact_service_sends_single_owner_email_without_user_autoreply(repository: ContactRepository, _case_id) -> None:
+    """PIPELINE-SINGLE-EMAIL-001: pipeline не формирует автоматическое письмо пользователю."""
+    email_service = RecordingEmailService()
     service = ContactService(repository, TrackingAIService(), email_service)
 
     response = service.process_contact(make_contact_data(), TEST_REQUEST_ID)
@@ -181,14 +179,17 @@ def test_user_email_failure_does_not_cancel_owner_email(repository: ContactRepos
 
     assert contact is not None
     assert contact.owner_email_status == EmailStatus.SENT.value
-    assert contact.user_email_status == EmailStatus.FAILED.value
-    assert response.status == ProcessingStatus.COMPLETED_WITH_ERRORS
+    assert response.owner_email_status == EmailStatus.SENT
+    assert response.status == ProcessingStatus.COMPLETED
+    assert len(email_service.sent_messages) == 1
+    assert email_service.sent_messages[0]["email_type"] == EmailType.OWNER_NOTIFICATION
+    assert not hasattr(email_service, "send_user_confirmation")
 
 
-@readable_test_id("оба письма failed не роняют pipeline")
-def test_both_email_failures_keep_ai_result(repository: ContactRepository, _case_id) -> None:
-    """PIPELINE-EMAILS-FAILED-001: оба email failed дают completed_with_errors без потери AI."""
-    email_service = RecordingEmailService(owner_mode="failed", user_mode="failed")
+@readable_test_id("ошибка письма владельцу сохраняет ai результат")
+def test_owner_email_failure_keeps_ai_result(repository: ContactRepository, _case_id) -> None:
+    """PIPELINE-EMAILS-FAILED-001: owner email failed не удаляет сохранённый AI-анализ."""
+    email_service = RecordingEmailService(owner_mode="failed")
     service = ContactService(repository, TrackingAIService(), email_service)
 
     response = service.process_contact(make_contact_data(), TEST_REQUEST_ID)
@@ -197,20 +198,18 @@ def test_both_email_failures_keep_ai_result(repository: ContactRepository, _case
     assert contact is not None
     assert contact.ai_status == AiStatus.SUCCESS.value
     assert contact.owner_email_status == EmailStatus.FAILED.value
-    assert contact.user_email_status == EmailStatus.FAILED.value
     assert response.status == ProcessingStatus.COMPLETED_WITH_ERRORS
 
 
-@readable_test_id("skipped email считается частичной ошибкой")
-def test_skipped_email_results_in_completed_with_errors(repository: ContactRepository, _case_id) -> None:
-    """PIPELINE-EMAIL-SKIPPED-001: skipped email переводит итог в completed_with_errors."""
-    email_service = RecordingEmailService(owner_mode="skipped", user_mode="skipped")
+@readable_test_id("skipped письмо владельцу считается частичной ошибкой")
+def test_skipped_owner_email_results_in_completed_with_errors(repository: ContactRepository, _case_id) -> None:
+    """PIPELINE-EMAIL-SKIPPED-001: skipped owner email переводит итог в completed_with_errors."""
+    email_service = RecordingEmailService(owner_mode="skipped")
     service = ContactService(repository, TrackingAIService(), email_service)
 
     response = service.process_contact(make_contact_data(), TEST_REQUEST_ID)
 
-    assert response.emails.owner == EmailStatus.SKIPPED
-    assert response.emails.user == EmailStatus.SKIPPED
+    assert response.owner_email_status == EmailStatus.SKIPPED
     assert response.status == ProcessingStatus.COMPLETED_WITH_ERRORS
 
 
@@ -264,7 +263,7 @@ def test_processing_failed_is_not_used_for_external_errors(repository: ContactRe
     service = ContactService(
         repository,
         TrackingAIService(mode="fallback"),
-        RecordingEmailService(owner_mode="failed", user_mode="failed"),
+        RecordingEmailService(owner_mode="failed"),
     )
 
     response = service.process_contact(make_contact_data(), TEST_REQUEST_ID)

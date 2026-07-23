@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import ValidationError
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -26,6 +27,7 @@ from app.schemas.contact import ContactRequestCreate
 from app.schemas.contact_storage import AiStatus, ContactAiUpdate, ContactCategory, ContactPriority, EmailStatus, ProcessingStatus, Sentiment
 from app.core.rate_limiter import SlidingWindowRateLimiter
 from app.services.diagnostics import build_health_response, build_metrics_response, measure_database_health
+from app.main import create_app
 
 
 def check_foundation(settings: Settings | None = None) -> int:
@@ -189,9 +191,6 @@ def check_repository() -> int:
         repository.update_owner_email_status(contact.id, EmailStatus.SENT)
         print("Обновление статуса письма владельцу: успешно")
 
-        repository.update_user_email_status(contact.id, EmailStatus.FAILED, "Тестовая ошибка письма")
-        print("Обновление статуса письма пользователю: успешно")
-
         repository.update_processing_status(contact.id, ProcessingStatus.COMPLETED_WITH_ERRORS)
         print("Обновление общего статуса: успешно")
 
@@ -304,25 +303,31 @@ def render_emails() -> int:
 
     try:
         owner_message = service.build_owner_message(context)
-        user_message = service.build_user_message(context)
         print("Рендеринг письма владельцу: успешно")
-        print("Рендеринг письма пользователю: успешно")
 
-        if not owner_message.html or not owner_message.text or not user_message.html or not user_message.text:
-            raise AssertionError("Один из шаблонов отрендерился пустым")
-        if "None" in owner_message.html + owner_message.text + user_message.html + user_message.text:
+        if not owner_message.html or not owner_message.text:
+            raise AssertionError("Шаблон владельца отрендерился пустым")
+        if "None" in owner_message.html + owner_message.text:
             raise AssertionError("В письмах найдено строковое значение None")
         if "<script>" in owner_message.html or "&lt;script&gt;" not in owner_message.html:
             raise AssertionError("HTML-экранирование комментария не сработало")
+        if "AI-анализ" not in owner_message.text or context.summary not in owner_message.text:
+            raise AssertionError("AI-анализ отсутствует в письме владельцу")
+        print("AI-анализ присутствует: успешно")
+        if context.suggested_reply not in owner_message.text:
+            raise AssertionError("Предлагаемый ответ отсутствует в письме владельцу")
+        print("Предлагаемый ответ присутствует: успешно")
+        if str(owner_message.reply_to) != str(context.email):
+            raise AssertionError("Reply-To владельца не совпал с email пользователя")
+        print("Reply-To пользователя настроен: успешно")
 
         (preview_dir / "owner_notification.html").write_text(owner_message.html, encoding="utf-8")
         (preview_dir / "owner_notification.txt").write_text(owner_message.text, encoding="utf-8")
-        (preview_dir / "user_confirmation.html").write_text(user_message.html, encoding="utf-8")
-        (preview_dir / "user_confirmation.txt").write_text(user_message.text, encoding="utf-8")
 
         print("HTML-экранирование: успешно")
-        print("Текстовые версии: успешно")
+        print("Текстовая версия: успешно")
         print(f"Preview сохранён: {preview_dir.as_posix()}/")
+        print("\nАвтоматическое письмо пользователю: не предусмотрено")
         print("\nВнешняя отправка: не выполнялась")
         print("Итог: email-шаблоны работают корректно")
         return 0
@@ -339,20 +344,18 @@ def check_email(live: bool = False, recipient: str | None = None) -> int:
         renderer = ResendEmailService(settings=_email_preview_settings())
         fake_service = FakeEmailService()
         owner_result = fake_service.send(renderer.build_owner_message(context), EmailType.OWNER_NOTIFICATION, context.contact_id)
-        user_result = fake_service.send(renderer.build_user_message(context), EmailType.USER_CONFIRMATION, context.contact_id)
 
-        if owner_result.status != EmailStatus.SENT or user_result.status != EmailStatus.SENT:
+        if owner_result.status != EmailStatus.SENT:
             print("Итог: fake-проверка email завершилась ошибкой")
             return 1
-        if len(fake_service.sent_messages) != 2:
-            print("Итог: fake-сервис не сохранил оба сообщения")
+        if len(fake_service.sent_messages) != 1:
+            print("Итог: fake-сервис должен сохранить одно письмо владельцу")
             return 1
 
         print("Формирование письма владельцу: успешно")
-        print("Формирование письма пользователю: успешно")
         print("Fake-отправка владельцу: успешно")
-        print("Fake-отправка пользователю: успешно")
-        print("Сообщения сохранены в памяти fake-сервиса: успешно")
+        print("Сообщение сохранено в памяти fake-сервиса: успешно")
+        print("Автоматическое письмо пользователю: не предусмотрено")
         print("Реальные письма: не отправлялись")
         print("\nИтог: email-сервис в fake-режиме работает корректно")
         return 0
@@ -403,7 +406,6 @@ def run_contact_pipeline(ai_fallback: bool = False, email_failure: str | None = 
         ai_service = FakeAIAnalysisService(mode="fallback" if ai_fallback else "success")
         email_service = FakeEmailService(
             owner_mode="failed" if email_failure in {"owner", "both"} else None,
-            user_mode="failed" if email_failure in {"user", "both"} else None,
         )
         service = ContactService(repository=repository, ai_service=ai_service, email_service=email_service)
 
@@ -418,20 +420,19 @@ def run_contact_pipeline(ai_fallback: bool = False, email_failure: str | None = 
             raise AssertionError("AI-статус не сохранён")
         print("Сохранение AI-результата: успешно")
 
-        if len(email_service.sent_messages) != 2:
-            raise AssertionError("Fake email service должен получить два письма")
+        if len(email_service.sent_messages) != 1:
+            raise AssertionError("Fake email service должен получить одно письмо владельцу")
         print("Fake-письмо владельцу: успешно")
-        print("Fake-письмо пользователю: успешно")
+        print("Автоматическое письмо пользователю: не предусмотрено")
 
         expected_owner_status = EmailStatus.FAILED.value if email_failure in {"owner", "both"} else EmailStatus.SENT.value
-        expected_user_status = EmailStatus.FAILED.value if email_failure in {"user", "both"} else EmailStatus.SENT.value
-        if contact.owner_email_status != expected_owner_status or contact.user_email_status != expected_user_status:
-            raise AssertionError("Email-статусы не совпали с ожидаемыми")
-        print("Сохранение email-статусов: успешно")
+        if contact.owner_email_status != expected_owner_status:
+            raise AssertionError("Email-статус владельца не совпал с ожидаемым")
+        print("Сохранение owner email status: успешно")
 
         expected_processing = (
             ProcessingStatus.COMPLETED_WITH_ERRORS.value
-            if ai_fallback or email_failure
+            if ai_fallback or email_failure in {"owner", "both"}
             else ProcessingStatus.COMPLETED.value
         )
         if contact.processing_status != expected_processing:
@@ -554,14 +555,12 @@ def check_diagnostics() -> int:
             ContactAiUpdate(ai_status=AiStatus.SUCCESS, category=ContactCategory.PROJECT_REQUEST.value),
         )
         repository.update_owner_email_status(first.id, EmailStatus.SENT)
-        repository.update_user_email_status(first.id, EmailStatus.SENT)
         repository.update_processing_status(first.id, ProcessingStatus.COMPLETED)
         repository.update_ai_result(
             second.id,
             ContactAiUpdate(ai_status=AiStatus.FALLBACK, category=ContactCategory.OTHER.value),
         )
         repository.update_owner_email_status(second.id, EmailStatus.FAILED, "Тестовая ошибка")
-        repository.update_user_email_status(second.id, EmailStatus.SKIPPED)
         repository.update_processing_status(second.id, ProcessingStatus.COMPLETED_WITH_ERRORS)
         print("Создание тестовых обращений: успешно")
 
@@ -572,7 +571,7 @@ def check_diagnostics() -> int:
         if metrics.ai[AiStatus.SUCCESS.value] != 1 or metrics.ai[AiStatus.FALLBACK.value] != 1:
             raise AssertionError("Агрегация AI status некорректна")
         print("Агрегация AI status: успешно")
-        if metrics.emails.owner[EmailStatus.FAILED.value] != 1 or metrics.emails.user[EmailStatus.SKIPPED.value] != 1:
+        if metrics.emails[EmailStatus.FAILED.value] != 1 or metrics.emails[EmailStatus.SENT.value] != 1:
             raise AssertionError("Агрегация email status некорректна")
         print("Агрегация email status: успешно")
         if metrics.categories[ContactCategory.PROJECT_REQUEST.value] != 1 or metrics.categories[ContactCategory.OTHER.value] != 1:
@@ -602,6 +601,81 @@ def check_diagnostics() -> int:
     return 0
 
 
+def check_landing() -> int:
+    temp_dir = tempfile.TemporaryDirectory()
+    try:
+        settings = Settings(
+            APP_ENV="test",
+            DATABASE_URL=f"sqlite:///{Path(temp_dir.name) / 'landing-cli.sqlite3'}",
+            LOG_FILE_PATH=str(Path(temp_dir.name) / "landing.log"),
+            CORS_ORIGINS=["http://testserver"],
+            AI_LIVE_REQUESTS_ENABLED=False,
+            EMAIL_LIVE_REQUESTS_ENABLED=False,
+        )
+        app = create_app(settings)
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            page = client.get("/", headers={"X-Request-ID": "cli-landing"})
+            html = page.text
+            css = client.get("/static/css/main.css")
+            js = client.get("/static/js/contact-form.js")
+
+        _assert_status(page.status_code, 200, "Главная страница должна быть доступна")
+        print("Главная страница доступна: успешно")
+        if "text/html" not in page.headers.get("content-type", ""):
+            raise AssertionError("Главная страница вернула не HTML")
+        print("HTML-шаблон отрендерен: успешно")
+        if '<form id="contact-form"' not in html:
+            raise AssertionError("Форма обратной связи не найдена")
+        print("Форма обратной связи найдена: успешно")
+        for field_name in ["name", "phone", "email", "comment"]:
+            if f'name="{field_name}"' not in html:
+                raise AssertionError(f"Поле формы не найдено: {field_name}")
+        print("Поля формы найдены: успешно")
+        if 'name="website"' not in html or 'tabindex="-1"' not in html:
+            raise AssertionError("Honeypot не найден или доступен из tab order")
+        print("Honeypot найден: успешно")
+        _assert_status(css.status_code, 200, "CSS должен быть доступен")
+        if "text/css" not in css.headers.get("content-type", ""):
+            raise AssertionError("CSS вернул некорректный Content-Type")
+        print("CSS доступен: успешно")
+        _assert_status(js.status_code, 200, "JavaScript должен быть доступен")
+        if "javascript" not in js.headers.get("content-type", ""):
+            raise AssertionError("JavaScript вернул некорректный Content-Type")
+        print("JavaScript доступен: успешно")
+        if "/api/contact" not in js.text or "/api/contact" not in html:
+            raise AssertionError("Контракт POST /api/contact не найден")
+        print("Контракт POST /api/contact: успешно")
+        for link in ['href="/docs"', 'href="/api/health"', 'href="/api/metrics"']:
+            if link not in html:
+                raise AssertionError(f"Ссылка не найдена: {link}")
+        print("Ссылки на API-документацию: успешно")
+        combined = f"{html}\n{css.text}\n{js.text}"
+        for forbidden in ["OPENAI_API_KEY", "RESEND_API_KEY", "sk-", ".env"]:
+            if forbidden in combined:
+                raise AssertionError("В HTML/static найден секретный маркер")
+        print("Проверка отсутствия секретов: успешно")
+        if "Обращение принято" not in js.text:
+            raise AssertionError("Frontend не содержит корректное подтверждение отправки")
+        for forbidden in ["проверьте почту", "вам отправлено письмо", "ответ направлен на email"]:
+            if forbidden in combined.lower():
+                raise AssertionError("Frontend сообщает об автоматическом письме пользователю")
+        print("Проверка отсутствия email-подтверждения пользователю: успешно")
+
+    except Exception as exc:
+        print("Итог: проверка Jinja2-лендинга завершилась ошибкой")
+        print(f"Причина: {exc}")
+        return 1
+    finally:
+        logging.shutdown()
+        temp_dir.cleanup()
+
+    print("\nProxyAPI: не вызывался")
+    print("Resend: не вызывался")
+    print("\nИтог: Jinja2-лендинг работает корректно")
+    return 0
+
+
 def _base_contact_payload_as_schema(**overrides) -> ContactRequestCreate:
     return ContactRequestCreate(**_base_contact_payload(**overrides))
 
@@ -626,6 +700,11 @@ def _assert_equal(actual, expected) -> None:
         raise AssertionError("Фактический результат не совпал с ожидаемым")
 
 
+def _assert_status(actual: int, expected: int, message: str) -> None:
+    if actual != expected:
+        raise AssertionError(f"{message}: status={actual}")
+
+
 def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -638,6 +717,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("check-repository", help="Проверить репозиторий обращений на временной SQLite")
     subparsers.add_parser("check-rate-limit", help="Проверить rate limiting без FastAPI и внешних сервисов")
     subparsers.add_parser("check-diagnostics", help="Проверить health и metrics без внешних сервисов")
+    subparsers.add_parser("check-landing", help="Проверить Jinja2-лендинг без Uvicorn и внешних сервисов")
     subparsers.add_parser("render-emails", help="Отрендерить preview email-шаблонов без отправки")
     email_parser = subparsers.add_parser("check-email", help="Проверить email-сервис")
     email_parser.add_argument("--live", action="store_true", help="Отправить одно тестовое письмо через Resend")
@@ -646,7 +726,7 @@ def main(argv: list[str] | None = None) -> int:
     pipeline_parser.add_argument("--ai-fallback", action="store_true", help="Имитировать AI fallback")
     pipeline_parser.add_argument(
         "--email-failure",
-        choices=["owner", "user", "both"],
+        choices=["owner", "both"],
         help="Имитировать ошибку email-отправки в простой fake-проверке",
     )
     analyze_parser = subparsers.add_parser("analyze-comment", help="Проверить AI-анализ комментария")
@@ -663,6 +743,8 @@ def main(argv: list[str] | None = None) -> int:
         return check_rate_limit()
     if args.command == "check-diagnostics":
         return check_diagnostics()
+    if args.command == "check-landing":
+        return check_landing()
     if args.command == "render-emails":
         return render_emails()
     if args.command == "check-email":

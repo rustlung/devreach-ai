@@ -41,7 +41,6 @@ class ContactRepository:
             processing_status=ProcessingStatus.RECEIVED.value,
             ai_status=AiStatus.PENDING.value,
             owner_email_status=EmailStatus.PENDING.value,
-            user_email_status=EmailStatus.PENDING.value,
         )
 
         try:
@@ -91,8 +90,6 @@ class ContactRepository:
         logger.info("event=contact_email_update_started operation=update_email_statuses contact_id=%s", contact_id)
         contact = self._get_existing_contact(contact_id)
 
-        # Email-статусы обновляются независимо: в будущем письма владельцу и пользователю
-        # могут завершаться в разное время и не должны перезаписывать состояние друг друга.
         if update.owner_email_status is not None:
             contact.owner_email_status = update.owner_email_status.value
             contact.owner_email_error = update.owner_email_error
@@ -100,14 +97,6 @@ class ContactRepository:
                 "event=contact_email_status_prepared contact_id=%s email_type=owner status=%s",
                 contact_id,
                 update.owner_email_status.value,
-            )
-        if update.user_email_status is not None:
-            contact.user_email_status = update.user_email_status.value
-            contact.user_email_error = update.user_email_error
-            logger.info(
-                "event=contact_email_status_prepared contact_id=%s email_type=user status=%s",
-                contact_id,
-                update.user_email_status.value,
             )
 
         return self._commit_updated_contact(contact, "contact_email_update_completed", "contact_email_update_failed")
@@ -121,17 +110,6 @@ class ContactRepository:
         return self.update_email_statuses(
             contact_id,
             ContactEmailStatusUpdate(owner_email_status=status, owner_email_error=error),
-        )
-
-    def update_user_email_status(
-        self,
-        contact_id: int,
-        status: EmailStatus,
-        error: str | None = None,
-    ) -> ContactRequest:
-        return self.update_email_statuses(
-            contact_id,
-            ContactEmailStatusUpdate(user_email_status=status, user_email_error=error),
         )
 
     def update_processing_status(self, contact_id: int, status: ProcessingStatus) -> ContactRequest:
@@ -157,7 +135,6 @@ class ContactRepository:
                 by_processing_status=self._count_by_column(ContactRequest.processing_status),
                 by_ai_status=self._count_by_column(ContactRequest.ai_status),
                 owner_email=self._count_by_column(ContactRequest.owner_email_status),
-                user_email=self._count_by_column(ContactRequest.user_email_status),
                 # Метрики возвращают только агрегаты: персональные поля не выбираются и не попадают в результат.
                 by_category=self._count_by_column(ContactRequest.category),
             )

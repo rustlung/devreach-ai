@@ -136,9 +136,8 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | REPOSITORY-AI-UPDATE-002 | AI error сохраняется | Временная SQLite | `ai_status=failed`, error | Вызвать `update_ai_result()` | Статус и ошибка сохранены | Unit | `test_update_ai_result_can_save_error` | `tests/unit/test_contact_repository.py` |
 | REPOSITORY-AI-UPDATE-003 | AI-обновление не меняет исходные данные | Временная SQLite | Созданное обращение | Обновить AI | Name/phone/email/comment не изменены | Unit | `test_update_ai_result_does_not_change_original_fields` | `tests/unit/test_contact_repository.py` |
 | REPOSITORY-AI-UPDATE-004 | AI-обновление отсутствующего ID отклоняется | Временная SQLite | ID 999 | Вызвать `update_ai_result()` | `ContactNotFoundError` | Unit | `test_update_ai_result_rejects_missing_contact` | `tests/unit/test_contact_repository.py` |
-| REPOSITORY-EMAIL-UPDATE-001 | Статус письма владельцу обновляется отдельно | Временная SQLite | `owner=sent` | Вызвать `update_owner_email_status()` | User email status не перезаписан | Unit | `test_update_owner_email_status_updates_only_owner` | `tests/unit/test_contact_repository.py` |
-| REPOSITORY-EMAIL-UPDATE-002 | Статус письма пользователю обновляется отдельно | Временная SQLite | `user=failed`, error | Вызвать `update_user_email_status()` | Owner email status не перезаписан | Unit | `test_update_user_email_status_updates_only_user` | `tests/unit/test_contact_repository.py` |
-| REPOSITORY-EMAIL-UPDATE-003 | Оба email-статуса можно обновить одной операцией | Временная SQLite | Owner/user statuses | Вызвать `update_email_statuses()` | Оба статуса сохранены | Unit | `test_update_email_statuses_can_update_both_statuses` | `tests/unit/test_contact_repository.py` |
+| REPOSITORY-EMAIL-UPDATE-001 | Статус письма владельцу обновляется отдельно | Временная SQLite | `owner=failed`, error | Вызвать `update_owner_email_status()` | Owner email status и error сохранены | Unit | `test_update_owner_email_status_updates_only_owner` | `tests/unit/test_contact_repository.py` |
+| EMAIL-OWNER-ONLY-001 | Общий update email-статуса работает только для владельца | Временная SQLite | `owner=sent` | Вызвать `update_email_statuses()` | User email fields отсутствуют | Unit | `test_update_email_statuses_updates_owner_only` | `tests/unit/test_contact_repository.py` |
 | REPOSITORY-STATUS-001 | Общий статус обработки обновляется отдельно | Временная SQLite | `completed` | Вызвать `update_processing_status()` | Остальные поля не изменены | Unit | `test_update_processing_status_changes_only_processing_status` | `tests/unit/test_contact_repository.py` |
 | REPOSITORY-METRICS-001 | Пустая база возвращает нулевые метрики | Пустая SQLite | Нет | Вызвать `get_metrics()` | Все агрегаты пустые/нулевые | Unit | `test_get_metrics_returns_zero_values_for_empty_database` | `tests/unit/test_contact_repository.py` |
 | REPOSITORY-METRICS-002 | Несколько записей корректно агрегируются | Временная SQLite | 2 обращения с разными статусами | Вызвать `get_metrics()` | Счётчики по статусам и категориям корректны | Unit | `test_get_metrics_aggregates_multiple_contacts` | `tests/unit/test_contact_repository.py` |
@@ -146,7 +145,8 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | REPOSITORY-ROLLBACK-001 | Ошибка сохранения выполняет rollback | Временная SQLite | Контролируемая ошибка commit | Вызвать `create()` | Rollback выполнен, сессия пригодна дальше | Unit | `test_create_rolls_back_after_database_error` | `tests/unit/test_contact_repository.py` |
 | DATABASE-MIGRATION-001 | Alembic upgrade создаёт таблицу обращений | Временная SQLite | Миграции Alembic | `upgrade head` | Таблица и ключевые поля созданы | Integration | `test_alembic_upgrade_creates_contact_requests_table` | `tests/integration/test_database.py` |
 | DATABASE-MODEL-002 | Модель совместима с актуальной миграцией | Временная SQLite после миграции | Валидное обращение | Создать через repository | Запись создаётся и читается | Integration | `test_repository_works_with_migrated_database` | `tests/integration/test_database.py` |
-| DATABASE-MIGRATION-002 | Alembic downgrade удаляет таблицу обращений | Временная SQLite | Миграции Alembic | `upgrade head`, `downgrade -1` | Таблица удалена | Integration | `test_alembic_downgrade_removes_contact_requests_table` | `tests/integration/test_database.py` |
+| DATABASE-MIGRATION-002 | Alembic downgrade возвращает legacy user email поля | Временная SQLite | Миграции Alembic | `upgrade head`, `downgrade -1` | `user_email_status` и `user_email_error` возвращены | Integration | `test_alembic_downgrade_restores_user_email_fields` | `tests/integration/test_database.py` |
+| DATABASE-REMOVE-USER-EMAIL-FIELDS-001 | Актуальный upgrade удаляет legacy user email поля | Временная SQLite | Миграции Alembic | `upgrade head`, `downgrade -1`, `upgrade head` | На `head` user email fields отсутствуют | Integration | `test_alembic_downgrade_then_upgrade_removes_user_email_fields_again` | `tests/integration/test_database.py` |
 
 ## Автоматические сценарии этапа 4
 
@@ -162,6 +162,7 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | AI-SCHEMA-006 | Fallback service result содержит статус | Нет | Error code | Вызвать `build_fallback_result()` | `status=fallback` | Unit | `test_fallback_service_result_has_fallback_status` | `tests/unit/test_ai_schemas.py` |
 | AI-SUCCESS-001 | Валидный structured output возвращает success | Mock OpenAI client | Тестовый комментарий | Вызвать `analyze_comment()` | `status=success` | Unit | `test_openai_service_returns_success_for_valid_structured_output` | `tests/unit/test_ai_service.py` |
 | AI-SUCCESS-002 | Системный промпт и комментарий передаются отдельно | Mock OpenAI client | Тестовый комментарий | Проверить messages | System/user разделены | Unit | `test_openai_service_sends_system_prompt_and_user_comment_separately` | `tests/unit/test_ai_service.py` |
+| AI-SUCCESS-003 | Project request для оценки передаётся отдельно и не меняет structured output | Mock OpenAI client | Комментарий о MVP и предварительной оценке | Проверить messages и `response_format` | Комментарий user message, `AIAnalysisResult` прежний | Unit | `test_project_estimate_comment_is_sent_as_user_message_without_changing_schema` | `tests/unit/test_ai_service.py` |
 | AI-LOGGING-001 | Полный комментарий не попадает в логи | Mock OpenAI client | Тестовый комментарий | Проверить caplog | Комментария нет, enum есть | Unit | `test_openai_service_does_not_log_full_comment` | `tests/unit/test_ai_service.py` |
 | AI-FALLBACK-NO-KEY-001 | Fallback при отсутствии API-ключа | Mock client не должен вызываться | Нет ключа | Вызвать `analyze_comment()` | `missing_api_key` | Unit | `test_openai_service_returns_fallback_before_client_call` | `tests/unit/test_ai_service.py` |
 | AI-FALLBACK-DISABLED-001 | Fallback при отключённых live-вызовах | Mock client не должен вызываться | `AI_LIVE_REQUESTS_ENABLED=false` | Вызвать `analyze_comment()` | `live_requests_disabled` | Unit | `test_openai_service_returns_fallback_before_client_call` | `tests/unit/test_ai_service.py` |
@@ -175,11 +176,14 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | AI-FALLBACK-INVALID-RESPONSE-001 | Fallback при невалидном structured output | Mock response | Unknown enum | Вызвать `analyze_comment()` | `invalid_structured_output` | Unit | `test_openai_service_returns_fallback_for_invalid_response` | `tests/unit/test_ai_service.py` |
 | AI-FALLBACK-EMPTY-001 | Fallback при пустом ответе | Mock response | `parsed=None` | Вызвать `analyze_comment()` | `empty_response` | Unit | `test_openai_service_returns_fallback_for_invalid_response` | `tests/unit/test_ai_service.py` |
 | AI-FALLBACK-UNEXPECTED-001 | Fallback при неожиданной ошибке | Mock exception | `RuntimeError` | Вызвать `analyze_comment()` | `unexpected_error` | Unit | `test_openai_service_returns_fallback_for_unexpected_error` | `tests/unit/test_ai_service.py` |
+| AI-PROMPT-SUGGESTED-REPLY-001 | System prompt требует содержательный suggested reply от первого лица | Нет | System prompt | Проверить обязательные фрагменты | Есть запреты "мы"/"свяжитесь с нами", требование деталей и уточнений | Unit | `test_system_prompt_defines_personal_suggested_reply_rules` | `tests/unit/test_ai_service.py` |
+| AI-PROMPT-PROJECT-REQUEST-001 | System prompt задаёт поведение для project_request | Нет | System prompt | Проверить блок project_request | Есть прямой ответ про реализуемость и уточнения для оценки | Unit | `test_system_prompt_defines_project_request_reply_behavior` | `tests/unit/test_ai_service.py` |
 | AI-PROMPT-INJECTION-001 | Prompt injection остаётся пользовательскими данными | Mock OpenAI client | Инъекционный комментарий | Проверить messages и prompt | Комментарий не склеен с system prompt | Unit | `test_prompt_injection_comment_is_not_concatenated_into_system_prompt` | `tests/unit/test_ai_service.py` |
 | AI-FAKE-001 | Fake success возвращает результат | Нет | Тестовый комментарий | Вызвать fake service | `status=success` | Unit | `test_fake_service_returns_success` | `tests/unit/test_ai_service.py` |
 | AI-FAKE-002 | Fake fallback возвращает fallback | Нет | Тестовый комментарий | Вызвать fake service | `status=fallback` | Unit | `test_fake_service_returns_fallback` | `tests/unit/test_ai_service.py` |
 | AI-FAKE-003 | Fake error имитирует исключение | Нет | Тестовый комментарий | Вызвать fake service | `RuntimeError` | Unit | `test_fake_service_can_raise_error` | `tests/unit/test_ai_service.py` |
 | AI-FAKE-004 | Fake service не создаёт OpenAI-клиент | OpenAI constructor заменён ошибкой | Тестовый комментарий | Вызвать fake service | Клиент не создан | Unit | `test_fake_service_does_not_create_openai_client` | `tests/unit/test_ai_service.py` |
+| AI-FAKE-005 | Fake project_request содержит персональный полезный suggested reply | Нет | Комментарий о MVP и предварительной оценке | Вызвать fake service | Нет "мы"/"свяжитесь с нами", есть реализуемость и список уточнений | Unit | `test_fake_project_request_suggested_reply_is_specific_and_personal` | `tests/unit/test_ai_service.py` |
 | AI-PROXY-001 | OpenAI SDK получает custom base_url | Mock OpenAI constructor | `OPENAI_BASE_URL=https://api.proxyapi.ru/openai/v1` | Вызвать `analyze_comment()` | Клиент создан с `base_url` | Unit | `test_openai_client_is_created_with_custom_base_url` | `tests/unit/test_ai_service.py` |
 
 ## Ручные сценарии этапа 4
@@ -199,15 +203,15 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | EMAIL-SCHEMA-003 | Валидный результат отправки принимается | Нет | `EmailSendResult(status=sent)` | Создать схему | Схема создана | Unit | `test_valid_email_send_result_is_accepted` | `tests/unit/test_email_schemas.py` |
 | EMAIL-SCHEMA-004 | Неизвестный email-статус отклоняется | Нет | `status=unknown` | Создать схему | `ValidationError` | Unit | `test_unknown_email_status_is_rejected` | `tests/unit/test_email_schemas.py` |
 | EMAIL-RENDER-OWNER-001 | Письмо владельцу рендерится | Тестовый контекст | Контакт и AI summary | Построить owner message | HTML/text не пустые, данные есть | Unit | `test_owner_notification_is_rendered` | `tests/unit/test_email_templates.py` |
-| EMAIL-RENDER-USER-001 | Письмо пользователю рендерится безопасно | Тестовый контекст | Контакт, AI error | Построить user message | Нет внутренней классификации и техошибки | Unit | `test_user_confirmation_is_rendered_without_internal_classification` | `tests/unit/test_email_templates.py` |
+| EMAIL-NO-USER-AUTOREPLY-001 | Автоматическое письмо пользователю не предусмотрено | Тестовый email-сервис | Нет | Проверить отсутствие user methods/templates | Методы и шаблоны user confirmation отсутствуют | Unit | `test_user_confirmation_templates_are_removed`, `test_user_confirmation_methods_are_not_available` | `tests/unit/test_email_templates.py`, `tests/unit/test_email_service.py` |
 | EMAIL-RENDER-OPTIONAL-001 | Optional-поля не выводят `None` | Контекст без optional | Нет summary/category/status | Построить owner message | Строка `None` отсутствует | Unit | `test_missing_optional_fields_do_not_render_none` | `tests/unit/test_email_templates.py` |
 | EMAIL-HTML-ESCAPE-001 | HTML комментария экранируется | Тестовый контекст | `<script>alert("xss")</script>` | Построить owner message | Тег не исполняется, текст экранирован | Unit | `test_user_html_in_comment_is_escaped` | `tests/unit/test_email_templates.py` |
 | EMAIL-TEXT-001 | Переносы строк сохраняются | Тестовый контекст | многострочный комментарий | Построить owner message | Text хранит переносы, HTML использует `pre-wrap` | Unit | `test_comment_line_breaks_are_preserved` | `tests/unit/test_email_templates.py` |
 | EMAIL-HTML-ESCAPE-002 | Suggested reply экранируется | Тестовый контекст | `<script>` в suggested_reply | Построить user message | HTML экранирован | Unit | `test_user_suggested_reply_is_escaped` | `tests/unit/test_email_templates.py` |
-| EMAIL-RENDER-FALLBACK-001 | AI fallback отображается корректно | Тестовый контекст | `ai_status=fallback` | Построить оба письма | Владелец видит fallback, пользователь получает безопасный ответ | Unit | `test_ai_fallback_is_rendered_safely` | `tests/unit/test_email_templates.py` |
+| EMAIL-RENDER-FALLBACK-001 | AI fallback отображается в письме владельцу | Тестовый контекст | `ai_status=fallback` | Построить owner message | Владелец видит fallback, provider error не раскрывается | Unit | `test_ai_fallback_is_rendered_safely` | `tests/unit/test_email_templates.py` |
 | EMAIL-SEND-PAYLOAD-001 | Payload Resend формируется корректно | Mock Resend | `EmailMessage` | Вызвать `send()` | from/to/subject/html/text/reply_to корректны | Unit | `test_resend_payload_is_built_correctly` | `tests/unit/test_email_service.py` |
 | EMAIL-SEND-OWNER-001 | Уведомление владельцу отправляется на `OWNER_EMAIL` | Mock Resend | Контекст обращения | Вызвать `send_owner_notification()` | Получатель owner, reply_to пользователь | Unit | `test_owner_notification_uses_owner_email_and_user_reply_to` | `tests/unit/test_email_service.py` |
-| EMAIL-SEND-USER-001 | Подтверждение отправляется пользователю | Mock Resend | Контекст обращения | Вызвать `send_user_confirmation()` | Получатель пользователь | Unit | `test_user_confirmation_uses_user_email` | `tests/unit/test_email_service.py` |
+| EMAIL-OWNER-REPLY-TO-001 | Reply-To письма владельцу равен email пользователя | Mock Resend | Контекст обращения | Вызвать `send_owner_notification()` | Получатель owner, `reply_to` пользователь | Unit | `test_owner_notification_uses_owner_email_and_user_reply_to` | `tests/unit/test_email_service.py` |
 | EMAIL-SEND-RESULT-001 | Успешный ответ сохраняет message id | Mock Resend | Ответ с `id` | Вызвать `send()` | `status=sent`, `message_id` сохранён | Unit | `test_successful_resend_response_returns_sent_status` | `tests/unit/test_email_service.py` |
 | EMAIL-SKIPPED-DISABLED-001 | Live отключён возвращает skipped | Mock Resend | `EMAIL_LIVE_REQUESTS_ENABLED=false` | Вызвать `send()` | SDK не вызван, `status=skipped` | Unit | `test_disabled_live_requests_return_skipped` | `tests/unit/test_email_service.py` |
 | EMAIL-FAILED-CONFIG-001 | Отсутствующие настройки обрабатываются | Mock Resend | нет ключа/sender/owner | Вызвать send-методы | `status=failed`, конкретный error_code | Unit | `test_missing_email_settings_are_handled` | `tests/unit/test_email_service.py` |
@@ -231,13 +235,13 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 
 | ID | Описание | Предусловия | Входные данные | Шаги | Ожидаемый результат | Тип теста | Тестовая функция | Файл теста |
 | -- | -------- | ----------- | -------------- | ---- | ------------------- | -------- | ---------------- | ---------- |
-| PIPELINE-SUCCESS-001 | Полный pipeline успешно завершается | Временная SQLite, fake AI/email | Валидное обращение | Вызвать `ContactService.process_contact()` | Запись, AI, оба email и `completed` сохранены | Unit | `test_contact_service_processes_full_success` | `tests/unit/test_contact_service.py` |
+| PIPELINE-SUCCESS-001 | Полный pipeline успешно завершается | Временная SQLite, fake AI/email | Валидное обращение | Вызвать `ContactService.process_contact()` | Запись, AI, owner email и `completed` сохранены | Unit | `test_contact_service_processes_full_success` | `tests/unit/test_contact_service.py` |
 | PIPELINE-AI-FALLBACK-001 | AI fallback не останавливает pipeline | Временная SQLite, fake AI fallback | Валидное обращение | Вызвать service | `ai_status=fallback`, письма отправлены, `completed_with_errors` | Unit | `test_contact_service_continues_after_ai_fallback` | `tests/unit/test_contact_service.py` |
 | PIPELINE-AI-EXCEPTION-001 | Исключение AI превращается в fallback | Временная SQLite, AI raises | Валидное обращение | Вызвать service | Fallback сохранён, email-этап продолжается | Unit | `test_contact_service_converts_ai_exception_to_fallback` | `tests/unit/test_contact_service.py` |
-| PIPELINE-OWNER-EMAIL-FAILED-001 | Ошибка письма владельцу не отменяет письмо пользователю | Временная SQLite, owner failed | Валидное обращение | Вызвать service | owner `failed`, user `sent`, `completed_with_errors` | Unit | `test_owner_email_failure_does_not_stop_user_email` | `tests/unit/test_contact_service.py` |
-| PIPELINE-USER-EMAIL-FAILED-001 | Ошибка письма пользователю не отменяет письмо владельцу | Временная SQLite, user failed | Валидное обращение | Вызвать service | owner `sent`, user `failed`, `completed_with_errors` | Unit | `test_user_email_failure_does_not_cancel_owner_email` | `tests/unit/test_contact_service.py` |
-| PIPELINE-EMAILS-FAILED-001 | Оба письма failed не роняют pipeline | Временная SQLite, оба email failed | Валидное обращение | Вызвать service | AI сохранён, оба email `failed`, `completed_with_errors` | Unit | `test_both_email_failures_keep_ai_result` | `tests/unit/test_contact_service.py` |
-| PIPELINE-EMAIL-SKIPPED-001 | Skipped email считается частичной ошибкой | Временная SQLite, оба email skipped | Валидное обращение | Вызвать service | Email `skipped`, итог `completed_with_errors` | Unit | `test_skipped_email_results_in_completed_with_errors` | `tests/unit/test_contact_service.py` |
+| PIPELINE-OWNER-EMAIL-FAILED-001 | Ошибка письма владельцу даёт частичный успех | Временная SQLite, owner failed | Валидное обращение | Вызвать service | owner `failed`, `completed_with_errors` | Unit | `test_owner_email_failure_results_in_completed_with_errors` | `tests/unit/test_contact_service.py` |
+| PIPELINE-SINGLE-EMAIL-001 | Pipeline отправляет ровно одно письмо владельцу | Временная SQLite, fake services | Валидное обращение | Вызвать service | Одно письмо `owner_notification`, user autoreply отсутствует | Unit | `test_contact_service_sends_single_owner_email_without_user_autoreply` | `tests/unit/test_contact_service.py` |
+| PIPELINE-EMAILS-FAILED-001 | Ошибка письма владельцу не удаляет AI-результат | Временная SQLite, owner failed | Валидное обращение | Вызвать service | AI сохранён, owner `failed`, `completed_with_errors` | Unit | `test_owner_email_failure_keeps_ai_result` | `tests/unit/test_contact_service.py` |
+| PIPELINE-EMAIL-SKIPPED-001 | Skipped owner email считается частичной ошибкой | Временная SQLite, owner skipped | Валидное обращение | Вызвать service | Owner email `skipped`, итог `completed_with_errors` | Unit | `test_skipped_owner_email_results_in_completed_with_errors` | `tests/unit/test_contact_service.py` |
 | PIPELINE-REPOSITORY-CREATE-FAILED-001 | Ошибка create останавливает внешние этапы | Repository create raises | Валидное обращение | Вызвать service | AI/email не вызваны, service error | Unit | `test_repository_create_error_stops_external_stages` | `tests/unit/test_contact_service.py` |
 | PIPELINE-REPOSITORY-UPDATE-FAILED-001 | Ошибка сохранения AI критична | Repository AI update raises | Валидное обращение | Вызвать service | Email не отправляется, service error | Unit | `test_repository_ai_update_error_stops_email` | `tests/unit/test_contact_service.py` |
 | PIPELINE-REPOSITORY-EMAIL-UPDATE-FAILED-001 | Ошибка сохранения email-статуса критична | Repository email update raises | Валидное обращение | Вызвать service | Отправка могла состояться, но service error поднят | Unit | `test_repository_email_status_update_error_is_critical` | `tests/unit/test_contact_service.py` |
@@ -296,7 +300,8 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | METRICS-SCHEMA-004 | `request_id` обязателен | Нет | Payload без request_id | Создать schema | `ValidationError` | Unit | `test_request_id_is_required` | `tests/unit/test_metrics_schema.py` |
 | METRICS-SCHEMA-005 | Пустые метрики имеют стабильную структуру | Пустой `ContactMetrics` | Нет агрегатов | `build_metrics_response()` | Все enum-ключи есть с нулями | Unit | `test_empty_metrics_have_stable_structure` | `tests/unit/test_metrics_schema.py` |
 | METRICS-SCHEMA-006 | Лишние персональные поля запрещены | Нет | `email` в response | Создать schema | `ValidationError` | Unit | `test_extra_personal_fields_are_forbidden` | `tests/unit/test_metrics_schema.py` |
-| METRICS-SCHEMA-007 | Вложенная email-схема запрещает лишние поля | Нет | `email` в `EmailMetrics` | Создать schema | `ValidationError` | Unit | `test_email_metrics_forbids_extra_fields` | `tests/unit/test_metrics_schema.py` |
+| METRICS-SCHEMA-007 | Legacy user email block отклоняется | Нет | `emails.owner/user` | Создать schema | `ValidationError` | Unit | `test_email_metrics_rejects_legacy_user_block` | `tests/unit/test_metrics_schema.py` |
+| METRICS-OWNER-EMAIL-ONLY-001 | Metrics содержит только статусы owner email | Временная SQLite | 3 обращения | GET `/api/metrics` | `emails` плоский, без `user` | Integration | `test_metrics_populated_database_returns_exact_aggregates` | `tests/integration/test_metrics_api.py` |
 | HEALTH-EXTENDED-001 | Health ok при доступной БД и configured integrations | Временная SQLite | Настроенные env | GET `/api/health` и health function | `status=ok`, latency >= 0 | Unit/Integration | `test_health_is_ok_when_database_and_integrations_are_configured`, `test_health_check_returns_ok_when_database_is_available` | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` |
 | HEALTH-DEGRADED-AI-001 | Health degraded при отключённом AI | Временная SQLite | `AI_LIVE_REQUESTS_ENABLED=false` | GET `/api/health` | HTTP 200, `ai=disabled`, `status=degraded` | Unit/Integration | `test_health_is_degraded_when_ai_is_disabled`, `test_health_check_returns_degraded_when_ai_is_disabled` | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` |
 | HEALTH-DEGRADED-EMAIL-001 | Health degraded при ненастроенном email | Временная SQLite | Нет Resend key | GET `/api/health` | HTTP 200, `email=not_configured` | Unit/Integration | `test_health_is_degraded_when_email_is_not_configured`, `test_health_check_returns_degraded_when_email_is_not_configured` | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` |
@@ -314,12 +319,83 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | METRICS-NO-RATE-LIMIT-001 | Metrics и health не ограничиваются contact limiter | Contact limiter limit=1 | Несколько GET | GET `/api/metrics`, `/api/health` | Нет HTTP 429 | Integration | `test_metrics_and_health_are_not_contact_rate_limited` | `tests/integration/test_metrics_api.py` |
 | METRICS-OPENAPI-001 | Metrics endpoint зарегистрирован в OpenAPI | API app | Нет | GET `/openapi.json` | 200/503 и schema есть | Integration | `test_metrics_openapi_contains_endpoint_and_responses` | `tests/integration/test_metrics_api.py` |
 
+## Автоматические сценарии этапа 9
+
+Проверки этапа 9 выполняются без browser automation, npm, ProxyAPI, Resend и production-БД. UI-контракт проверяется через FastAPI `TestClient`, HTML/static строковые проверки и один fake API-сценарий совместимости с `POST /api/contact`.
+
+| ID | Описание | Предусловия | Входные данные | Шаги | Ожидаемый результат | Тип теста | Тестовая функция | Файл теста |
+| -- | -------- | ----------- | -------------- | ---- | ------------------- | -------- | ---------------- | ---------- |
+| LANDING-PAGE-001 | Главная страница отдаёт HTML и request ID | TestClient | GET `/` | Запросить страницу | HTTP 200, `text/html`, форма, ссылки и `X-Request-ID` | Integration | `test_landing_page_returns_html_with_request_id` | `tests/integration/test_landing_page.py` |
+| LANDING-FORM-FIELDS-001 | Форма содержит поля обращения | TestClient | GET `/` | Проверить HTML | Есть `name`, `phone`, `email`, `comment` | Integration | `test_landing_page_contains_contact_fields_and_honeypot` | `tests/integration/test_landing_page.py` |
+| LANDING-HONEYPOT-001 | Honeypot присутствует и скрыт визуально | TestClient | GET `/` | Проверить `website`, CSS-класс и `tabindex=-1` | Honeypot есть и не попадает в tab order | Integration | `test_landing_page_contains_contact_fields_and_honeypot` | `tests/integration/test_landing_page.py` |
+| LANDING-ACCESSIBILITY-001 | Форма содержит базовую доступную разметку | TestClient | GET `/` | Проверить labels, constraints, submit и `aria-live` | Разметка доступна для ручной проверки | Integration | `test_landing_page_form_has_accessible_markup` | `tests/integration/test_landing_page.py` |
+| LANDING-NO-SECRETS-001 | HTML/CSS/JS не раскрывают секреты | TestClient | HTML/static | Проверить секретные маркеры | Ключи и `.env` не отображаются | Integration | `test_landing_assets_do_not_expose_secrets` | `tests/integration/test_landing_page.py` |
+| LANDING-STATIC-CSS-001 | CSS доступен через StaticFiles | TestClient | GET `/static/css/main.css` | Проверить статус и Content-Type | HTTP 200, `text/css` | Integration | `test_landing_static_css_is_available` | `tests/integration/test_landing_page.py` |
+| LANDING-STATIC-JS-001 | JS доступен и использует `/api/contact` | TestClient | GET `/static/js/contact-form.js` | Проверить статус, Content-Type, endpoint и POST | HTTP 200, JavaScript содержит контракт | Integration | `test_landing_static_js_is_available_and_targets_contact_api` | `tests/integration/test_landing_page.py` |
+| LANDING-FRONTEND-CONTRACT-001 | JS безопасно обрабатывает 422/429/500/network/non-JSON | TestClient | JS-файл | Проверить ключевые ветки обработки | Есть безопасные сообщения, JSON parsing и `textContent` | Integration | `test_landing_frontend_contract_handles_errors_safely` | `tests/integration/test_landing_page.py` |
+| LANDING-SECURITY-001 | Нет внешних scripts и inline handlers | TestClient | GET `/` | Проверить HTML | Нет внешних scripts, inline handlers и iframe | Integration | `test_landing_security_has_no_external_scripts_or_inline_handlers` | `tests/integration/test_landing_page.py` |
+| LANDING-API-COMPATIBILITY-001 | Frontend-сценарий совместим с `POST /api/contact` | Временная SQLite, fake AI/email | Валидный JSON | GET `/`, затем POST `/api/contact` | API возвращает HTTP 201 и безопасный body | Integration | `test_landing_api_compatibility_accepts_contact_payload` | `tests/integration/test_landing_page.py` |
+| UI-NO-EMAIL-CONFIRMATION-001 | Frontend не обещает письмо пользователю | TestClient | HTML и JS | Проверить тексты | Нет формулировок `проверьте почту`, `вам отправлено письмо`, `ответ направлен на email` | Integration | `test_landing_frontend_does_not_claim_user_email_confirmation` | `tests/integration/test_landing_page.py` |
+
 ## Ручные сценарии
 
 - Выполнить `alembic upgrade head` из корня проекта.
 - Выполнить `python -m app.cli check-foundation`.
 - При необходимости запустить `uvicorn app.main:app --reload` и открыть `/docs`.
 - Выполнить `GET /api/health` через браузер или HTTP-клиент.
+
+### UI-LANDING-001
+
+- Открыть `/`.
+- Проверить отображение desktop.
+- Проверить отображение узкого окна.
+- Ожидаемый результат: страница читаема, без горизонтального скролла, ссылки `/docs`, `/api/health`, `/api/metrics` доступны.
+
+### UI-FORM-SUCCESS-001
+
+- Заполнить валидные тестовые данные.
+- Отправить форму.
+- Проверить loading, success `Обращение принято` и очистку формы.
+
+### UI-FORM-VALIDATION-001
+
+- Ввести имя с цифрами, некорректный email и короткий комментарий.
+- Отправить форму.
+- Ожидаемый результат: общий текст `Проверьте заполненные данные.` и ошибки рядом с полями.
+
+### UI-FORM-RATE-LIMIT-001
+
+- Перед проверкой установить `AI_LIVE_REQUESTS_ENABLED=false` и `EMAIL_LIVE_REQUESTS_ENABLED=false`.
+- Выполнить отправки до превышения лимита.
+- Ожидаемый результат: HTTP 429 и сообщение `Слишком много обращений. Попробуйте повторить позже.`
+
+### UI-FORM-NETWORK-001
+
+- Остановить сервер.
+- Отправить форму с уже открытой страницы.
+- Ожидаемый результат: сообщение `Не удалось связаться с сервером. Проверьте соединение и повторите попытку.`
+
+### UI-FORM-SERVER-001
+
+- Имитировать безопасный HTTP 500.
+- Ожидаемый результат: общее сообщение об ошибке и request ID, если API вернул его.
+
+### UI-FORM-KEYBOARD-001
+
+- Пройти форму клавиатурой.
+- Проверить видимый focus.
+- Отправить форму Enter или кнопкой.
+
+### UI-FORM-XSS-001
+
+- Вставить HTML/JS в комментарий.
+- Убедиться, что страница не выполняет скрипт и не использует `innerHTML` для server data.
+
+### UI-HONEYPOT-001
+
+- Через DevTools заполнить скрытое поле `website`.
+- Отправить форму.
+- Ожидаемый результат: обращение не создаётся, пользователь не видит специального сообщения про honeypot.
 
 ## Таблица соответствия
 
@@ -400,8 +476,7 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | REPOSITORY-AI-UPDATE-003 | AI-обновление не меняет исходные данные | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
 | REPOSITORY-AI-UPDATE-004 | AI-обновление отсутствующего ID отклоняется | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
 | REPOSITORY-EMAIL-UPDATE-001 | Статус письма владельцу обновляется отдельно | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
-| REPOSITORY-EMAIL-UPDATE-002 | Статус письма пользователю обновляется отдельно | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
-| REPOSITORY-EMAIL-UPDATE-003 | Оба email-статуса можно обновить одной операцией | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
+| EMAIL-OWNER-ONLY-001 | Email-статусы ограничены письмом владельцу | Unit | Да | `tests/unit/test_contact_repository.py`, `tests/unit/test_email_templates.py` | [x] |
 | REPOSITORY-STATUS-001 | Общий статус обработки обновляется отдельно | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
 | REPOSITORY-METRICS-001 | Пустая база возвращает нулевые метрики | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
 | REPOSITORY-METRICS-002 | Несколько записей корректно агрегируются | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
@@ -409,7 +484,8 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | REPOSITORY-ROLLBACK-001 | Ошибка сохранения выполняет rollback | Unit | Да | `tests/unit/test_contact_repository.py` | [x] |
 | DATABASE-MIGRATION-001 | Alembic upgrade создаёт таблицу обращений | Integration | Да | `tests/integration/test_database.py` | [x] |
 | DATABASE-MODEL-002 | Модель совместима с актуальной миграцией | Integration | Да | `tests/integration/test_database.py` | [x] |
-| DATABASE-MIGRATION-002 | Alembic downgrade удаляет таблицу обращений | Integration | Да | `tests/integration/test_database.py` | [x] |
+| DATABASE-MIGRATION-002 | Alembic downgrade возвращает legacy user email поля | Integration | Да | `tests/integration/test_database.py` | [x] |
+| DATABASE-REMOVE-USER-EMAIL-FIELDS-001 | Актуальный upgrade удаляет legacy user email поля | Integration | Да | `tests/integration/test_database.py` | [x] |
 | AI-SCHEMA-001 | Валидный AI-результат принимается | Unit | Да | `tests/unit/test_ai_schemas.py` | [x] |
 | AI-SCHEMA-002 | Неизвестные enum-значения отклоняются | Unit | Да | `tests/unit/test_ai_schemas.py` | [x] |
 | AI-SCHEMA-003 | Слишком длинный summary отклоняется | Unit | Да | `tests/unit/test_ai_schemas.py` | [x] |
@@ -418,6 +494,7 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | AI-SCHEMA-006 | Fallback service result содержит статус | Unit | Да | `tests/unit/test_ai_schemas.py` | [x] |
 | AI-SUCCESS-001 | Валидный structured output возвращает success | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-SUCCESS-002 | Системный промпт и комментарий передаются отдельно | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-SUCCESS-003 | Project request для оценки передаётся отдельно и не меняет structured output | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-LOGGING-001 | Полный комментарий не попадает в логи | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FALLBACK-NO-KEY-001 | Fallback при отсутствии API-ключа | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FALLBACK-DISABLED-001 | Fallback при отключённых live-вызовах | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
@@ -431,11 +508,14 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | AI-FALLBACK-INVALID-RESPONSE-001 | Fallback при невалидном structured output | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FALLBACK-EMPTY-001 | Fallback при пустом ответе | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FALLBACK-UNEXPECTED-001 | Fallback при неожиданной ошибке | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-PROMPT-SUGGESTED-REPLY-001 | System prompt требует содержательный suggested reply от первого лица | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-PROMPT-PROJECT-REQUEST-001 | System prompt задаёт поведение для project_request | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-PROMPT-INJECTION-001 | Prompt injection остаётся пользовательскими данными | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FAKE-001 | Fake success возвращает результат | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FAKE-002 | Fake fallback возвращает fallback | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FAKE-003 | Fake error имитирует исключение | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-FAKE-004 | Fake service не создаёт OpenAI-клиент | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
+| AI-FAKE-005 | Fake project_request содержит персональный полезный suggested reply | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-PROXY-001 | OpenAI SDK получает custom base_url | Unit | Да | `tests/unit/test_ai_service.py` | [x] |
 | AI-LIVE-001 | Один контролируемый live-запрос через ProxyAPI | Manual | Нет | CLI manual | [x] |
 | EMAIL-SCHEMA-001 | Валидное email-сообщение принимается | Unit | Да | `tests/unit/test_email_schemas.py` | [x] |
@@ -443,15 +523,15 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | EMAIL-SCHEMA-003 | Валидный результат отправки принимается | Unit | Да | `tests/unit/test_email_schemas.py` | [x] |
 | EMAIL-SCHEMA-004 | Неизвестный email-статус отклоняется | Unit | Да | `tests/unit/test_email_schemas.py` | [x] |
 | EMAIL-RENDER-OWNER-001 | Письмо владельцу рендерится | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
-| EMAIL-RENDER-USER-001 | Письмо пользователю не раскрывает внутренние данные | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
+| EMAIL-NO-USER-AUTOREPLY-001 | Автоматическое письмо пользователю не предусмотрено | Unit | Да | `tests/unit/test_email_templates.py`, `tests/unit/test_email_service.py` | [x] |
 | EMAIL-RENDER-OPTIONAL-001 | Optional-поля не выводят `None` | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
 | EMAIL-HTML-ESCAPE-001 | HTML комментария экранируется | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
 | EMAIL-TEXT-001 | Переносы строк комментария сохраняются | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
 | EMAIL-HTML-ESCAPE-002 | Suggested reply экранируется | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
-| EMAIL-RENDER-FALLBACK-001 | AI fallback отображается корректно | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
+| EMAIL-RENDER-FALLBACK-001 | AI fallback отображается в письме владельцу | Unit | Да | `tests/unit/test_email_templates.py` | [x] |
 | EMAIL-SEND-PAYLOAD-001 | Payload Resend формируется корректно | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-SEND-OWNER-001 | Письмо владельцу отправляется на `OWNER_EMAIL` | Unit | Да | `tests/unit/test_email_service.py` | [x] |
-| EMAIL-SEND-USER-001 | Письмо пользователю отправляется на его email | Unit | Да | `tests/unit/test_email_service.py` | [x] |
+| EMAIL-OWNER-REPLY-TO-001 | Reply-To письма владельцу равен email пользователя | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-SEND-RESULT-001 | Успешный ответ сохраняет provider message id | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-SKIPPED-DISABLED-001 | Live отключён возвращает skipped | Unit | Да | `tests/unit/test_email_service.py` | [x] |
 | EMAIL-FAILED-CONFIG-001 | Отсутствующие настройки возвращают failed | Unit | Да | `tests/unit/test_email_service.py` | [x] |
@@ -466,10 +546,10 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | PIPELINE-SUCCESS-001 | Полный pipeline успешно завершается | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
 | PIPELINE-AI-FALLBACK-001 | AI fallback не останавливает pipeline | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
 | PIPELINE-AI-EXCEPTION-001 | Исключение AI превращается в fallback | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
-| PIPELINE-OWNER-EMAIL-FAILED-001 | Ошибка письма владельцу не отменяет письмо пользователю | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
-| PIPELINE-USER-EMAIL-FAILED-001 | Ошибка письма пользователю не отменяет письмо владельцу | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
-| PIPELINE-EMAILS-FAILED-001 | Оба письма failed не роняют pipeline | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
-| PIPELINE-EMAIL-SKIPPED-001 | Skipped email считается частичной ошибкой | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-OWNER-EMAIL-FAILED-001 | Ошибка письма владельцу даёт частичный успех | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-SINGLE-EMAIL-001 | Pipeline отправляет ровно одно письмо владельцу | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-EMAILS-FAILED-001 | Ошибка письма владельцу не удаляет AI-результат | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
+| PIPELINE-EMAIL-SKIPPED-001 | Skipped owner email считается частичной ошибкой | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
 | PIPELINE-REPOSITORY-CREATE-FAILED-001 | Ошибка create останавливает внешние этапы | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
 | PIPELINE-REPOSITORY-UPDATE-FAILED-001 | Ошибка сохранения AI критична | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
 | PIPELINE-REPOSITORY-EMAIL-UPDATE-FAILED-001 | Ошибка сохранения email-статуса критична | Unit | Да | `tests/unit/test_contact_service.py` | [x] |
@@ -514,7 +594,8 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | METRICS-SCHEMA-004 | `request_id` обязателен | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
 | METRICS-SCHEMA-005 | Пустые метрики имеют стабильную структуру | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
 | METRICS-SCHEMA-006 | Лишние персональные поля запрещены | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
-| METRICS-SCHEMA-007 | Вложенная email-схема запрещает лишние поля | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
+| METRICS-SCHEMA-007 | Legacy user email block отклоняется | Unit | Да | `tests/unit/test_metrics_schema.py` | [x] |
+| METRICS-OWNER-EMAIL-ONLY-001 | Metrics содержит только статусы owner email | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
 | HEALTH-EXTENDED-001 | Health ok при доступной БД и configured integrations | Unit/Integration | Да | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` | [x] |
 | HEALTH-DEGRADED-AI-001 | Health degraded при отключённом AI | Unit/Integration | Да | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` | [x] |
 | HEALTH-DEGRADED-EMAIL-001 | Health degraded при ненастроенном email | Unit/Integration | Да | `tests/unit/test_health_service.py`, `tests/integration/test_health.py` | [x] |
@@ -531,6 +612,26 @@ HTTP-запрос получает `X-Request-ID` в ответе.
 | METRICS-DATABASE-FAILED-001 | Metrics возвращает безопасный 503 при ошибке БД | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
 | METRICS-NO-RATE-LIMIT-001 | Metrics и health не ограничиваются contact limiter | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
 | METRICS-OPENAPI-001 | Metrics endpoint зарегистрирован в OpenAPI | Integration | Да | `tests/integration/test_metrics_api.py` | [x] |
+| LANDING-PAGE-001 | Главная страница отдаёт HTML и request ID | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| LANDING-FORM-FIELDS-001 | Форма содержит поля обращения | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| LANDING-HONEYPOT-001 | Honeypot присутствует и скрыт визуально | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| LANDING-ACCESSIBILITY-001 | Форма содержит базовую доступную разметку | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| LANDING-NO-SECRETS-001 | HTML/CSS/JS не раскрывают секреты | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| LANDING-STATIC-CSS-001 | CSS доступен через StaticFiles | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| LANDING-STATIC-JS-001 | JS доступен и использует `/api/contact` | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| LANDING-FRONTEND-CONTRACT-001 | JS безопасно обрабатывает ошибки API и сети | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| LANDING-SECURITY-001 | Нет внешних scripts и inline handlers | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| LANDING-API-COMPATIBILITY-001 | Frontend-сценарий совместим с `POST /api/contact` | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| UI-NO-EMAIL-CONFIRMATION-001 | Frontend не обещает письмо пользователю | Integration | Да | `tests/integration/test_landing_page.py` | [x] |
+| UI-LANDING-001 | Проверка desktop/mobile отображения `/` | Manual | Нет | Browser manual | [ ] |
+| UI-FORM-SUCCESS-001 | Успешная отправка формы в браузере | Manual | Нет | Browser manual | [ ] |
+| UI-FORM-VALIDATION-001 | Field errors при 422 в браузере | Manual | Нет | Browser manual | [ ] |
+| UI-FORM-RATE-LIMIT-001 | Сообщение при HTTP 429 | Manual | Нет | Browser manual | [ ] |
+| UI-FORM-NETWORK-001 | Сообщение при network error | Manual | Нет | Browser manual | [ ] |
+| UI-FORM-SERVER-001 | Сообщение при HTTP 500 и request ID | Manual | Нет | Browser manual | [ ] |
+| UI-FORM-KEYBOARD-001 | Клавиатурная навигация и focus | Manual | Нет | Browser manual | [ ] |
+| UI-FORM-XSS-001 | HTML/JS в комментарии не исполняется | Manual | Нет | Browser manual | [ ] |
+| UI-HONEYPOT-001 | Заполненный honeypot не создаёт обращение | Manual | Нет | Browser manual | [ ] |
 
 ## Финальный checklist перед сдачей проекта
 

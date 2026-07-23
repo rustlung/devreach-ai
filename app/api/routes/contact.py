@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api", tags=["contact"])
                         "message": "Обращение принято",
                         "ai_processed": True,
                         "ai_status": "success",
-                        "emails": {"owner": "sent", "user": "sent"},
+                        "owner_email_status": "sent",
                         "request_id": "example-request-id",
                     }
                 }

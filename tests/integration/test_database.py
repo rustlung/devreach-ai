@@ -43,6 +43,10 @@ def test_alembic_upgrade_creates_contact_requests_table(migrated_database_url, _
         assert "contact_requests" in inspector.get_table_names()
         column_names = {column["name"] for column in inspector.get_columns("contact_requests")}
         assert {"id", "name", "phone", "email", "comment", "processing_status"}.issubset(column_names)
+        assert "owner_email_status" in column_names
+        assert "owner_email_error" in column_names
+        assert "user_email_status" not in column_names
+        assert "user_email_error" not in column_names
     finally:
         engine.dispose()
 
@@ -72,9 +76,9 @@ def test_repository_works_with_migrated_database(migrated_database_url, _case_id
         engine.dispose()
 
 
-@readable_test_id("alembic downgrade удаляет таблицу обращений")
-def test_alembic_downgrade_removes_contact_requests_table(migrated_database_url, _case_id) -> None:
-    """DATABASE-MIGRATION-002: Alembic downgrade удаляет таблицу обращений."""
+@readable_test_id("alembic downgrade возвращает legacy user email поля")
+def test_alembic_downgrade_restores_user_email_fields(migrated_database_url, _case_id) -> None:
+    """DATABASE-MIGRATION-002: downgrade -1 возвращает старые user email поля."""
     database_url, database_path = migrated_database_url
     command.upgrade(alembic_config_for(database_url), "head")
     command.downgrade(alembic_config_for(database_url), "-1")
@@ -82,6 +86,29 @@ def test_alembic_downgrade_removes_contact_requests_table(migrated_database_url,
     assert Path(database_path).exists()
     engine = create_engine(database_url, future=True)
     try:
-        assert "contact_requests" not in inspect(engine).get_table_names()
+        inspector = inspect(engine)
+        assert "contact_requests" in inspector.get_table_names()
+        column_names = {column["name"] for column in inspector.get_columns("contact_requests")}
+        assert "user_email_status" in column_names
+        assert "user_email_error" in column_names
+    finally:
+        engine.dispose()
+
+
+@readable_test_id("повторный upgrade снова удаляет legacy поля")
+def test_alembic_downgrade_then_upgrade_removes_user_email_fields_again(migrated_database_url, _case_id) -> None:
+    """DATABASE-REMOVE-USER-EMAIL-FIELDS-001: downgrade/upgrade корректно меняет структуру таблицы."""
+    database_url, _database_path = migrated_database_url
+    config = alembic_config_for(database_url)
+    command.upgrade(config, "head")
+    command.downgrade(config, "-1")
+    command.upgrade(config, "head")
+
+    engine = create_engine(database_url, future=True)
+    try:
+        column_names = {column["name"] for column in inspect(engine).get_columns("contact_requests")}
+        assert "owner_email_status" in column_names
+        assert "user_email_status" not in column_names
+        assert "user_email_error" not in column_names
     finally:
         engine.dispose()

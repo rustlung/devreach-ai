@@ -1,5 +1,7 @@
 Новое обращение с сайта
 
+Обращение
+
 Имя: {{ name }}
 Email: {{ email }}
 Телефон: {{ phone }}
@@ -18,6 +20,7 @@ AI-анализ:
 {{ summary }}
 {% endif %}{% if suggested_reply %}
 Предлагаемый ответ:
+
 {{ suggested_reply }}
 {% endif %}{% if ai_fallback_used %}
 AI fallback применён, результат требует ручной проверки.

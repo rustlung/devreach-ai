@@ -52,15 +52,10 @@ class CountingAIService:
 class CountingEmailService:
     def __init__(self) -> None:
         self.owner_calls = 0
-        self.user_calls = 0
 
     def send_owner_notification(self, context: EmailTemplateContext) -> EmailSendResult:
         self.owner_calls += 1
         return EmailSendResult(status=EmailStatus.SENT, provider="fake", message_id=f"owner-{self.owner_calls}")
-
-    def send_user_confirmation(self, context: EmailTemplateContext) -> EmailSendResult:
-        self.user_calls += 1
-        return EmailSendResult(status=EmailStatus.SENT, provider="fake", message_id=f"user-{self.user_calls}")
 
 
 @pytest.fixture
@@ -135,7 +130,6 @@ def test_contact_requests_within_limit_are_created(rate_limit_api_context, _case
     assert contact_count(session) == 2
     assert ai_service.calls == 2
     assert email_service.owner_calls == 2
-    assert email_service.user_calls == 2
 
 
 @readable_test_id("превышение лимита возвращает 429 и не вызывает pipeline")
@@ -167,7 +161,6 @@ def test_contact_request_over_limit_returns_429_without_pipeline(rate_limit_api_
     assert contact_count(session) == 2
     assert ai_service.calls == 2
     assert email_service.owner_calls == 2
-    assert email_service.user_calls == 2
     log_text = caplog.text
     assert "event=contact_rate_limit_exceeded" in log_text
     assert "ip_sha256:" in log_text
@@ -222,7 +215,6 @@ def test_invalid_contact_request_counts_toward_rate_limit(rate_limit_api_context
     assert contact_count(session) == 0
     assert ai_service.calls == 0
     assert email_service.owner_calls == 0
-    assert email_service.user_calls == 0
 
 
 @readable_test_id("honeypot запрос не создает запись и логируется")
@@ -244,5 +236,4 @@ def test_honeypot_request_does_not_create_contact_and_is_logged(rate_limit_api_c
     assert contact_count(session) == 0
     assert ai_service.calls == 0
     assert email_service.owner_calls == 0
-    assert email_service.user_calls == 0
     assert "event=contact_honeypot_triggered" in caplog.text

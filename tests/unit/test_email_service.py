@@ -65,7 +65,7 @@ def test_resend_payload_is_built_correctly(_case_id) -> None:
     resend_module = fake_resend_module()
     service = ResendEmailService(settings=make_settings(), resend_module=resend_module)
 
-    result = service.send(make_message(), EmailType.USER_CONFIRMATION, contact_id=15)
+    result = service.send(make_message(), EmailType.OWNER_NOTIFICATION, contact_id=15)
 
     assert result.status == EmailStatus.SENT
     assert resend_module.api_key == "test-key"
@@ -99,23 +99,13 @@ def test_owner_notification_uses_owner_email_and_user_reply_to(_case_id) -> None
     assert FakeResendEmails.payload["reply_to"] == "user@example.com"
 
 
-@readable_test_id("письмо пользователю отправляется на его email")
-def test_user_confirmation_uses_user_email(_case_id) -> None:
-    """EMAIL-SEND-USER-001: подтверждение отправляется пользователю."""
-    resend_module = fake_resend_module()
-    service = ResendEmailService(settings=make_settings(), resend_module=resend_module)
-    context = email_service_module.EmailTemplateContext(
-        name="Иван Иванов",
-        phone="+79991234567",
-        email="user@example.com",
-        comment="Тестовый комментарий",
-    )
+@readable_test_id("user confirmation метод отсутствует")
+def test_user_confirmation_methods_are_not_available(_case_id) -> None:
+    """EMAIL-NO-USER-AUTOREPLY-001: email-сервис не предоставляет автоматическое письмо пользователю."""
+    service = ResendEmailService(settings=make_settings(), resend_module=fake_resend_module())
 
-    result = service.send_user_confirmation(context)
-
-    assert result.status == EmailStatus.SENT
-    assert FakeResendEmails.payload["to"] == ["user@example.com"]
-    assert FakeResendEmails.payload["reply_to"] == "reply@example.com"
+    assert not hasattr(service, "send_user_confirmation")
+    assert not hasattr(service, "build_user_message")
 
 
 @readable_test_id("успешный ответ сохраняет provider message id")
@@ -277,7 +267,7 @@ def test_fake_email_service_modes(mode: str) -> None:
 def test_fake_email_service_can_raise_error(_case_id) -> None:
     """EMAIL-FAKE-002: fake-сервис умеет имитировать исключение."""
     with pytest.raises(RuntimeError):
-        FakeEmailService(mode="error").send(make_message(), EmailType.TEST_MESSAGE)
+        FakeEmailService(mode="exception").send(make_message(), EmailType.TEST_MESSAGE)
 
 
 @readable_test_id("fake сервис не вызывает resend sdk")

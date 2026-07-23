@@ -10,6 +10,7 @@
     <div style="background:#ffffff; border:1px solid #e5e7eb; border-radius:8px; padding:24px;">
       <h1 style="margin:0 0 16px; font-size:22px; line-height:1.3;">Новое обращение с сайта</h1>
 
+      <h2 style="margin:20px 0 8px; font-size:16px;">Обращение</h2>
       <table style="width:100%; border-collapse:collapse; margin-bottom:20px;">
         <tr>
           <td style="padding:8px 0; color:#6b7280; width:160px;">Имя</td>
@@ -31,7 +32,7 @@
         {% endif %}
       </table>
 
-      <h2 style="margin:20px 0 8px; font-size:16px;">Комментарий</h2>
+      <h3 style="margin:20px 0 8px; font-size:15px;">Комментарий</h3>
       <div style="white-space:pre-wrap; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px; padding:14px;">{{ comment }}</div>
 
       <h2 style="margin:20px 0 8px; font-size:16px;">AI-анализ</h2>
@@ -66,7 +67,7 @@
       {% endif %}
 
       {% if suggested_reply %}
-      <h3 style="margin:18px 0 8px; font-size:15px;">Предлагаемый ответ</h3>
+      <h2 style="margin:18px 0 8px; font-size:16px;">Предлагаемый ответ</h2>
       <div style="white-space:pre-wrap; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px; padding:14px;">{{ suggested_reply }}</div>
       {% endif %}
 

@@ -1,6 +1,9 @@
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.exception_handlers import (
     RateLimitExceededError,
@@ -12,10 +15,14 @@ from app.api.exception_handlers import (
 from app.api.routes.contact import router as contact_router
 from app.api.routes.health import router as health_router
 from app.api.routes.metrics import router as metrics_router
+from app.api.routes.pages import router as pages_router
 from app.core.config import Settings, get_settings
 from app.core.logging import RequestLoggingMiddleware, configure_logging
 from app.core.rate_limiter import SlidingWindowRateLimiter
 from app.core.version import APP_VERSION
+
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -47,6 +54,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.include_router(pages_router)
     app.include_router(health_router)
     app.include_router(contact_router)
     app.include_router(metrics_router)

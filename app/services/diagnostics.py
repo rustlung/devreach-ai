@@ -13,7 +13,7 @@ from app.core.version import APP_VERSION
 from app.db.session import create_database_engine
 from app.schemas.contact_storage import AiStatus, ContactCategory, ContactMetrics, EmailStatus, ProcessingStatus
 from app.schemas.health import DatabaseHealth, DependencyHealth, HealthResponse
-from app.schemas.metrics import ContactMetricsResponse, EmailMetrics
+from app.schemas.metrics import ContactMetricsResponse
 
 
 logger = logging.getLogger(__name__)
@@ -112,10 +112,7 @@ def build_metrics_response(metrics: ContactMetrics, request_id: str | None = Non
         total_contacts=metrics.total_contacts,
         processing=_normalize_metric_map(metrics.by_processing_status, [status.value for status in ProcessingStatus]),
         ai=_normalize_metric_map(metrics.by_ai_status, [status.value for status in AiStatus]),
-        emails=EmailMetrics(
-            owner=_normalize_metric_map(metrics.owner_email, [status.value for status in EmailStatus]),
-            user=_normalize_metric_map(metrics.user_email, [status.value for status in EmailStatus]),
-        ),
+        emails=_normalize_metric_map(metrics.owner_email, [status.value for status in EmailStatus]),
         categories=_normalize_metric_map(
             metrics.by_category,
             [category.value for category in ContactCategory],
