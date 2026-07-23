@@ -81,10 +81,21 @@ def _redact_validation_inputs(errors: list) -> list:
         if isinstance(error, dict):
             safe_error = dict(error)
             safe_error.pop("input", None)
+            if isinstance(safe_error.get("msg"), str):
+                safe_error["msg"] = _clean_validation_message(safe_error["msg"])
             redacted_errors.append(safe_error)
         else:
             redacted_errors.append(error)
     return redacted_errors
+
+
+def _clean_validation_message(message: str) -> str:
+    # Pydantic добавляет технический префикс к ValueError. Для клиента оставляем
+    # только понятную русскую причину, заданную в валидаторе.
+    for prefix in ("Value error, ", "ValueError, "):
+        if message.startswith(prefix):
+            return message.removeprefix(prefix)
+    return message
 
 
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:

@@ -184,6 +184,31 @@ def test_contact_api_validation_errors_do_not_call_service(contact_api_context, 
     assert session.execute(select(ContactRequest)).scalars().all() == []
 
 
+@readable_test_id("validation response не содержит value error prefix")
+def test_contact_api_validation_messages_do_not_include_value_error_prefix(contact_api_context, _case_id) -> None:
+    """CONTACT-API-VALIDATION-002: сообщения 422 не содержат технический префикс Pydantic."""
+    app, session = contact_api_context
+    tracking_service = TrackingContactService()
+    app.dependency_overrides[get_contact_service] = lambda: tracking_service
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/api/contact",
+            json=valid_payload(name="2134234", phone="", email="", comment=""),
+        )
+
+    body = response.json()
+    messages = [detail["msg"] for detail in body["error"]["details"]]
+    assert response.status_code == 422
+    assert all(not message.startswith("Value error,") for message in messages)
+    assert "Имя должно содержать хотя бы одну букву" in messages
+    assert "Телефон обязателен" in messages
+    assert "Email обязателен" in messages
+    assert "Комментарий обязателен" in messages
+    assert tracking_service.called is False
+    assert session.execute(select(ContactRequest)).scalars().all() == []
+
+
 @readable_test_id("ошибка базы при создании возвращает безопасный 500")
 def test_contact_api_database_create_error_returns_safe_500(contact_api_context, _case_id) -> None:
     """CONTACT-API-DATABASE-FAILED-001: ошибка create возвращает безопасный HTTP 500 без внешних вызовов."""
